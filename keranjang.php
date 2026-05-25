@@ -102,15 +102,26 @@ $recommended = array_slice($recommended, 0, 3);
 
             <!-- Jumlah + Update -->
             <td class="td-qty">
-              <form method="POST" action="keranjang.php" style="display:flex;align-items:center;gap:6px;">
+              <form method="POST" action="keranjang.php" class="qty-form" style="display:flex;align-items:center;gap:6px;">
+                
                 <input type="hidden" name="action" value="update">
                 <input type="hidden" name="id" value="<?= $item['id'] ?>">
+
                 <div class="qty-control">
                   <button type="button" onclick="changeQty(this, -1)">&#8722;</button>
-                  <input type="number" name="qty" value="<?= $item['qty'] ?>" min="1" max="99">
+
+                  <input 
+                    type="number"
+                    name="qty"
+                    value="<?= $item['qty'] ?>"
+                    min="1"
+                    max="99"
+                    onchange="this.form.submit()"
+                  >
+
                   <button type="button" onclick="changeQty(this, 1)">&#43;</button>
                 </div>
-                <button type="submit" class="btn btn-primary btn-sm">Update</button>
+
               </form>
             </td>
 
@@ -338,7 +349,21 @@ $recommended = array_slice($recommended, 0, 3);
 
 <script>
 function changeQty(btn, delta) {
-  const inp = btn.closest('.qty-control').querySelector('input');
-  inp.value = Math.max(1, parseInt(inp.value) + delta);
+
+  const form = btn.closest('.qty-form');
+  const inp  = form.querySelector('input[name="qty"]');
+
+  let value = parseInt(inp.value) || 1;
+
+  value += delta;
+
+  if (value < 1) {
+    value = 1;
+  }
+
+  inp.value = value;
+
+  // otomatis submit
+  form.submit();
 }
 </script>

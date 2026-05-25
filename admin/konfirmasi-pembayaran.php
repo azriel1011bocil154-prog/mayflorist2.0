@@ -1,5 +1,4 @@
 
-
 <?php
 // admin/konfirmasi-pembayaran.php
 
@@ -26,6 +25,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
 }
 
+<<<<<<< HEAD
 // ── Dummy data pembayaran masuk (nanti: SELECT dari DB WHERE status = 'pending_konfirmasi') ──
 include '../koneksi.php';
 
@@ -86,6 +86,57 @@ $jenis_label = [
     'lunas' => 'Lunas',
     'pelunasan' => 'Pelunasan'
 ];
+=======
+// ── Ambil data transaksi yang menunggu konfirmasi dari DB ──
+$query_bayar = "
+    SELECT 
+        t.id_transaksi                                    AS id,
+        CONCAT('#ORD-', LPAD(p.id_pesanan, 3, '0'))      AS no_order,
+        DATE_FORMAT(t.tanggal_transaksi, '%d %M %Y')     AS tgl_bayar,
+        u.nama_user,
+        t.jenis_pembayaran                                AS jenis,
+        t.total_pembayaran                                AS nominal,
+        p.total_harga                                     AS total_order,
+        t.metode_pembayaran                               AS metode,
+        t.bukti_pembayaran                                AS bukti,
+        p.catatan,
+        t.status_pembayaran                               AS status,
+        p.id_pesanan
+    FROM transaksi t
+    JOIN pesanan p ON t.id_pesanan = p.id_pesanan
+    JOIN user u    ON p.id_user    = u.id_user
+    WHERE t.status_pembayaran = 'menunggu'
+    ORDER BY t.tanggal_transaksi ASC
+";
+
+$res_bayar  = mysqli_query($conn, $query_bayar);
+if (!$res_bayar) {
+    die('Query error: ' . mysqli_error($conn));
+}
+
+$pembayaran = [];
+while ($row = mysqli_fetch_assoc($res_bayar)) {
+    // Ambil item pesanan untuk tiap transaksi
+    $id_pesanan = $row['id_pesanan'];
+    $q_items = mysqli_prepare($conn,
+        "SELECT pr.nama_produk AS name, dp.jumlah_produk AS qty
+         FROM detail_pesanan dp
+         JOIN produk pr ON dp.id_produk = pr.id_produk
+         WHERE dp.id_pesanan = ?"
+    );
+    mysqli_stmt_bind_param($q_items, 'i', $id_pesanan);
+    mysqli_stmt_execute($q_items);
+    $res_items = mysqli_stmt_get_result($q_items);
+    $items = [];
+    while ($item = mysqli_fetch_assoc($res_items)) {
+        $items[] = $item;
+    }
+    mysqli_stmt_close($q_items);
+
+    $row['items'] = $items;
+    $pembayaran[] = $row;
+}
+>>>>>>> 68441473e5ac4ce90c2ff68496c881deb3f34cf1
 
 $jenis_color = [
     'dp' => 'var(--rose)',
