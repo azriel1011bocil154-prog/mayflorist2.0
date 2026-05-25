@@ -1,5 +1,4 @@
 
-
 <?php
 // admin/konfirmasi-pembayaran.php
 
@@ -26,51 +25,55 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
 }
 
-// ── Dummy data pembayaran masuk (nanti: SELECT dari DB WHERE status = 'pending_konfirmasi') ──
-$pembayaran = [
-  [
-    'id'          => 1,
-    'no_order'    => 'FLR-A1B2C3D4',
-    'tgl_bayar'   => '10 Mei 2026 14:22',
-    'nama_user'   => 'Dewi Anggraini',
-    'jenis'       => 'dp',
-    'nominal'     => 155000,
-    'total_order' => 310000,
-    'metode'      => 'Transfer Bank',
-    'bukti'       => 'assets/images/bukti-dummy.jpg', // nanti path file upload
-    'catatan'     => 'Sudah transfer jam 14.00',
-    'status'      => 'pending_konfirmasi',
-    'items'       => [['name'=>'Pink Hydrangea Box','qty'=>1]],
-  ],
-  [
-    'id'          => 2,
-    'no_order'    => 'FLR-E5F6G7H8',
-    'tgl_bayar'   => '09 Mei 2026 10:05',
-    'nama_user'   => 'Budi Santoso',
-    'jenis'       => 'lunas',
-    'nominal'     => 345000,
-    'total_order' => 345000,
-    'metode'      => 'QRIS',
-    'bukti'       => '',
-    'catatan'     => '',
-    'status'      => 'pending_konfirmasi',
-    'items'       => [['name'=>'Buket Mawar Merah','qty'=>1],['name'=>'Sunflower Happiness','qty'=>1]],
-  ],
-  [
-    'id'          => 3,
-    'no_order'    => 'FLR-M3N4O5P6',
-    'tgl_bayar'   => '08 Mei 2026 09:30',
-    'nama_user'   => 'Rina Susanti',
-    'jenis'       => 'pelunasan',
-    'nominal'     => 170000,
-    'total_order' => 340000,
-    'metode'      => 'Transfer Bank',
-    'bukti'       => '',
-    'catatan'     => 'Pelunasan pesanan wisuda',
-    'status'      => 'pending_konfirmasi',
-    'items'       => [['name'=>'Graduation Mega Bouquet','qty'=>1]],
-  ],
-];
+// ── Ambil data transaksi yang menunggu konfirmasi dari DB ──
+$query_bayar = "
+    SELECT 
+        t.id_transaksi                                    AS id,
+        CONCAT('#ORD-', LPAD(p.id_pesanan, 3, '0'))      AS no_order,
+        DATE_FORMAT(t.tanggal_transaksi, '%d %M %Y')     AS tgl_bayar,
+        u.nama_user,
+        t.jenis_pembayaran                                AS jenis,
+        t.total_pembayaran                                AS nominal,
+        p.total_harga                                     AS total_order,
+        t.metode_pembayaran                               AS metode,
+        t.bukti_pembayaran                                AS bukti,
+        p.catatan,
+        t.status_pembayaran                               AS status,
+        p.id_pesanan
+    FROM transaksi t
+    JOIN pesanan p ON t.id_pesanan = p.id_pesanan
+    JOIN user u    ON p.id_user    = u.id_user
+    WHERE t.status_pembayaran = 'menunggu'
+    ORDER BY t.tanggal_transaksi ASC
+";
+
+$res_bayar  = mysqli_query($conn, $query_bayar);
+if (!$res_bayar) {
+    die('Query error: ' . mysqli_error($conn));
+}
+
+$pembayaran = [];
+while ($row = mysqli_fetch_assoc($res_bayar)) {
+    // Ambil item pesanan untuk tiap transaksi
+    $id_pesanan = $row['id_pesanan'];
+    $q_items = mysqli_prepare($conn,
+        "SELECT pr.nama_produk AS name, dp.jumlah_produk AS qty
+         FROM detail_pesanan dp
+         JOIN produk pr ON dp.id_produk = pr.id_produk
+         WHERE dp.id_pesanan = ?"
+    );
+    mysqli_stmt_bind_param($q_items, 'i', $id_pesanan);
+    mysqli_stmt_execute($q_items);
+    $res_items = mysqli_stmt_get_result($q_items);
+    $items = [];
+    while ($item = mysqli_fetch_assoc($res_items)) {
+        $items[] = $item;
+    }
+    mysqli_stmt_close($q_items);
+
+    $row['items'] = $items;
+    $pembayaran[] = $row;
+}
 
 $jenis_label = ['dp'=>'DP','lunas'=>'Lunas','pelunasan'=>'Pelunasan'];
 $jenis_color = ['dp'=>'var(--rose)','lunas'=>'var(--moss)','pelunasan'=>'var(--gold)'];
