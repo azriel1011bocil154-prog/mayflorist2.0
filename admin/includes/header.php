@@ -4,8 +4,10 @@
 
 $active_menu = $active_menu ?? 'dashboard';
 $page_title  = $page_title  ?? 'Admin — MayFlorist';
-
-session_start();
+// Menjadi seperti ini:
+if (session_status() === PHP_SESSION_NONE) {
+    session_start();
+}
 if (!isset($_SESSION['cart'])) $_SESSION['cart'] = [];
 ?>
 <!DOCTYPE html>

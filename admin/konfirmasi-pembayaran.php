@@ -1,10 +1,10 @@
-
 <?php
 // admin/konfirmasi-pembayaran.php
 
 $page_title  = 'Konfirmasi Pembayaran — Admin Fleuriste';
 $active_menu = 'konfirmasi';
 include 'includes/header.php';
+include '../koneksi.php'; // Posisikan koneksi di paling atas agar proses POST bisa pakai $conn
 
 function formatRupiah($angka) {
     return 'Rp ' . number_format($angka, 0, ',', '.');
@@ -14,23 +14,40 @@ $alert = '';
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $action   = $_POST['action']   ?? '';
     $no_order = $_POST['no_order'] ?? '';
-    $id_bayar = $_POST['id_bayar'] ?? '';
+    $id_pesanan = (int)($_POST['id_bayar'] ?? 0); // id_bayar di form berisi id_pesanan
+
     if ($action === 'konfirmasi') {
-        // Nanti: UPDATE pembayaran SET status='dikonfirmasi' WHERE id = ?
-        //        UPDATE orders SET status = (jika dp → 'DP Dikonfirmasi', jika lunas → next status) WHERE no_order = ?
-        $alert = ['type'=>'success', 'msg'=>"Pembayaran $no_order berhasil dikonfirmasi!"];
+        // 1. Update status_pembayaran di tabel transaksi menjadi 'diterima'
+        $stmt1 = $conn->prepare("UPDATE transaksi SET status_pembayaran = 'diterima' WHERE id_pesanan = ?");
+        $stmt1->bind_param("i", $id_pesanan);
+        $stmt1->execute();
+
+        // 2. Update status_pesanan di tabel pesanan menjadi 'diproses' (atau sesuaikan dengan enum milikmu)
+        $stmt2 = $conn->prepare("UPDATE pesanan SET status_pesanan = 'diproses' WHERE id_pesanan = ?");
+        $stmt2->bind_param("i", $id_pesanan);
+        $stmt2->execute();
+
+        $alert = ['type' => 'success', 'msg' => "Pembayaran $no_order berhasil dikonfirmasi dan pesanan langsung diproses!"];
+
     } elseif ($action === 'tolak') {
-        // Nanti: UPDATE pembayaran SET status='ditolak', UPDATE orders SET status='Menunggu Pembayaran'
-        $alert = ['type'=>'error', 'msg'=>"Pembayaran $no_order ditolak."];
+        // 1. Update status_pembayaran di tabel transaksi menjadi 'ditolak'
+        $stmt1 = $conn->prepare("UPDATE transaksi SET status_pembayaran = 'ditolak' WHERE id_pesanan = ?");
+        $stmt1->bind_param("i", $id_pesanan);
+        $stmt1->execute();
+
+        // 2. Kembalikan status_pesanan di tabel pesanan menjadi 'belum_bayar'
+        $stmt2 = $conn->prepare("UPDATE pesanan SET status_pesanan = 'belum_bayar' WHERE id_pesanan = ?");
+        $stmt2->bind_param("i", $id_pesanan);
+        $stmt2->execute();
+
+        $alert = ['type' => 'error', 'msg' => "Pembayaran $no_order telah ditolak."];
     }
 }
 
-<<<<<<< HEAD
-// ── Dummy data pembayaran masuk (nanti: SELECT dari DB WHERE status = 'pending_konfirmasi') ──
-include '../koneksi.php';
-
+// ── Ambil Data Pembayaran Menunggu Konfirmasi dari DB ──
 $pembayaran = [];
 
+// Melakukan JOIN dengan tabel transaksi untuk mengambil bukti_pembayaran dan status_pembayaran
 $query = mysqli_query($conn, "
     SELECT 
         p.id_pesanan,
@@ -40,17 +57,21 @@ $query = mysqli_query($conn, "
         p.status_pesanan,
         p.metode_pengiriman,
         p.catatan,
-        u.nama_user
+        u.nama_user,
+        t.bukti_pembayaran,
+        t.status_pembayaran,
+        t.metode_pembayaran
     FROM pesanan p
     LEFT JOIN user u ON p.id_user = u.id_user
+    LEFT JOIN transaksi t ON p.id_pesanan = t.id_pesanan
+    WHERE p.status_pesanan = 'belum_bayar' OR (t.status_pembayaran = 'menunggu' AND t.status_pembayaran IS NOT NULL)
     ORDER BY p.id_pesanan DESC
 ");
 
 while ($row = mysqli_fetch_assoc($query)) {
 
-    // ambil detail item
+    // Ambil detail item
     $items = [];
-
     $detail = mysqli_query($conn, "
         SELECT dp.jumlah_produk, pr.nama_produk
         FROM detail_pesanan dp
@@ -65,18 +86,21 @@ while ($row = mysqli_fetch_assoc($query)) {
         ];
     }
 
+    // Jalur folder tempat kamu menyimpan upload bukti dari user (sesuaikan jika berbeda, misal: '../uploads/')
+    $path_bukti = '../assets/img/bukti/' . $row['bukti_pembayaran']; 
+
     $pembayaran[] = [
         'id'          => $row['id_pesanan'],
         'no_order'    => 'FLR-' . str_pad($row['id_pesanan'], 5, '0', STR_PAD_LEFT),
         'tgl_bayar'   => date('d M Y H:i', strtotime($row['tanggal_pesanan'])),
-        'nama_user'   => $row['nama_user'],
-        'jenis'       => 'lunas',
+        'nama_user'   => $row['nama_user'] ?? 'Guest',
+        'jenis'       => 'lunas', // Default lunas sesuai struktur bisnismu
         'nominal'     => $row['total_harga'],
         'total_order' => $row['total_harga'],
-        'metode'      => $row['metode_pengiriman'],
-        'bukti'       => '',
+        'metode'      => $row['metode_pembayaran'] ?? $row['metode_pengiriman'],
+        'bukti'       => (!empty($row['bukti_pembayaran'])) ? $path_bukti : '',
         'catatan'     => $row['catatan'],
-        'status'      => $row['status_pesanan'],
+        'status'      => $row['status_pembayaran'] ?? $row['status_pesanan'],
         'items'       => $items
     ];
 }
@@ -86,57 +110,6 @@ $jenis_label = [
     'lunas' => 'Lunas',
     'pelunasan' => 'Pelunasan'
 ];
-=======
-// ── Ambil data transaksi yang menunggu konfirmasi dari DB ──
-$query_bayar = "
-    SELECT 
-        t.id_transaksi                                    AS id,
-        CONCAT('#ORD-', LPAD(p.id_pesanan, 3, '0'))      AS no_order,
-        DATE_FORMAT(t.tanggal_transaksi, '%d %M %Y')     AS tgl_bayar,
-        u.nama_user,
-        t.jenis_pembayaran                                AS jenis,
-        t.total_pembayaran                                AS nominal,
-        p.total_harga                                     AS total_order,
-        t.metode_pembayaran                               AS metode,
-        t.bukti_pembayaran                                AS bukti,
-        p.catatan,
-        t.status_pembayaran                               AS status,
-        p.id_pesanan
-    FROM transaksi t
-    JOIN pesanan p ON t.id_pesanan = p.id_pesanan
-    JOIN user u    ON p.id_user    = u.id_user
-    WHERE t.status_pembayaran = 'menunggu'
-    ORDER BY t.tanggal_transaksi ASC
-";
-
-$res_bayar  = mysqli_query($conn, $query_bayar);
-if (!$res_bayar) {
-    die('Query error: ' . mysqli_error($conn));
-}
-
-$pembayaran = [];
-while ($row = mysqli_fetch_assoc($res_bayar)) {
-    // Ambil item pesanan untuk tiap transaksi
-    $id_pesanan = $row['id_pesanan'];
-    $q_items = mysqli_prepare($conn,
-        "SELECT pr.nama_produk AS name, dp.jumlah_produk AS qty
-         FROM detail_pesanan dp
-         JOIN produk pr ON dp.id_produk = pr.id_produk
-         WHERE dp.id_pesanan = ?"
-    );
-    mysqli_stmt_bind_param($q_items, 'i', $id_pesanan);
-    mysqli_stmt_execute($q_items);
-    $res_items = mysqli_stmt_get_result($q_items);
-    $items = [];
-    while ($item = mysqli_fetch_assoc($res_items)) {
-        $items[] = $item;
-    }
-    mysqli_stmt_close($q_items);
-
-    $row['items'] = $items;
-    $pembayaran[] = $row;
-}
->>>>>>> 68441473e5ac4ce90c2ff68496c881deb3f34cf1
 
 $jenis_color = [
     'dp' => 'var(--rose)',
@@ -144,27 +117,25 @@ $jenis_color = [
     'pelunasan' => 'var(--gold)'
 ];
 
-if (!$insert) {
-    die("ERROR INSERT: " . $conn->error);
-} 
+// Pengecekan error $insert yang rusak didelete dari sini
 ?>
 
 <div class="page-body">
   <?php if ($alert): ?>
-  <div class="alert <?= $alert['type']==='success'?'alert-success':'alert-danger' ?>">
+  <div class="alert <?= $alert['type']==='success'?'alert-success':'alert-danger' ?>" style="padding:12px; margin-bottom:15px; border-radius:6px; <?= $alert['type']==='success'?'background:#eaf7ee;color:#256d3f;':'background:#fdeaea;color:#9b2020;' ?>">
     <?= $alert['type']==='success'?'&#10003;':'&#10006;' ?> <?= htmlspecialchars($alert['msg']) ?>
   </div>
   <?php endif; ?>
 
-  <div class="page-header">
-    <h1>Konfirmasi Pembayaran</h1>
+  <div class="page-header" style="margin-bottom: 20px;">
+    <h1 style="font-size: 24px;">Konfirmasi Pembayaran</h1>
     <span style="font-size:13px;color:var(--muted);"><?= count($pembayaran) ?> menunggu konfirmasi</span>
   </div>
 
   <div style="display:flex;flex-direction:column;gap:16px;">
     <?php foreach ($pembayaran as $b): ?>
-    <div class="card">
-      <div class="card-header" style="background:var(--petal);">
+    <div class="card" style="border: 1px solid var(--border); border-radius: 8px; overflow: hidden; background: #fff;">
+      <div class="card-header" style="background:var(--petal); padding: 12px 20px; display: flex; justify-content: space-between; align-items: center;">
         <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;">
           <strong style="font-family:monospace;color:var(--bark);"><?= $b['no_order'] ?></strong>
           <span style="font-size:11px;font-weight:600;padding:3px 10px;border-radius:100px;
@@ -174,29 +145,28 @@ if (!$insert) {
           <span style="font-size:12px;color:var(--muted);">&#128197; <?= $b['tgl_bayar'] ?></span>
         </div>
         <span style="font-size:12px;background:#fff8e1;color:#7d5a00;padding:3px 10px;border-radius:100px;font-weight:600;">
-          &#128336; <?= htmlspecialchars($b['status']) ?>
+          &#128336; <?= htmlspecialchars(ucfirst($b['status'])) ?>
         </span>
       </div>
 
-      <div class="card-body" style="display:grid;grid-template-columns:1fr 1fr 220px;gap:20px;align-items:start;">
+      <div class="card-body" style="display:grid;grid-template-columns:1fr 1fr 220px;gap:20px;align-items:start; padding: 20px;">
 
-        <!-- Info Pembayaran -->
         <div>
           <h4 style="font-size:13px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:12px;">
             Info Pembayaran
           </h4>
           <table style="font-size:13px;width:100%;">
-            <tr><td style="color:var(--muted);padding-bottom:6px;width:120px;">Nama</td>
+            <tr><td style="color:var(--muted);padding-bottom:6px;width:100px;">Nama</td>
                 <td style="font-weight:500;"><?= htmlspecialchars($b['nama_user']) ?></td></tr>
             <tr><td style="color:var(--muted);padding-bottom:6px;">Metode</td>
-                <td><?= $b['metode'] ?></td></tr>
+                <td><?= htmlspecialchars($b['metode']) ?></td></tr>
             <tr><td style="color:var(--muted);padding-bottom:6px;">Nominal</td>
                 <td style="font-weight:700;color:var(--rose);font-size:15px;"><?= formatRupiah($b['nominal']) ?></td></tr>
             <tr><td style="color:var(--muted);padding-bottom:6px;">Total Order</td>
                 <td><?= formatRupiah($b['total_order']) ?></td></tr>
             <?php if ($b['catatan']): ?>
             <tr><td style="color:var(--muted);vertical-align:top;">Catatan</td>
-                <td style="font-style:italic;color:var(--muted);">"<?= htmlspecialchars($b['catatan']) ?>"</td></tr>
+                <td style="font-style:italic;color:var(--muted);")>"<?= htmlspecialchars($b['catatan']) ?>"</td></tr>
             <?php endif; ?>
           </table>
 
@@ -208,7 +178,6 @@ if (!$insert) {
           </div>
         </div>
 
-        <!-- Bukti Transfer -->
         <div>
           <h4 style="font-size:13px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:12px;">
             Bukti Pembayaran
@@ -227,14 +196,13 @@ if (!$insert) {
                         border:2px dashed var(--border);border-radius:8px;
                         display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;">
               <span style="font-size:28px;opacity:.4;">&#128247;</span>
-              <span style="font-size:12px;color:var(--muted);">
-                <?= $b['metode'] === 'Cash di Toko' ? 'Cash — Tidak ada bukti' : 'Belum diupload' ?>
+              <span style="font-size:12px;color:var(--muted); text-align:center; padding:0 5px;">
+                <?= ($b['metode'] === 'bayar_ditempat' || $b['metode'] === 'Cash di Toko') ? 'COD / Cash — Tanpa Bukti' : 'Belum diupload / File tidak ada' ?>
               </span>
             </div>
           <?php endif; ?>
         </div>
 
-        <!-- Aksi -->
         <div>
           <h4 style="font-size:13px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:12px;">
             Tindakan
@@ -251,11 +219,11 @@ if (!$insert) {
             </div>
 
             <button type="submit" name="action" value="konfirmasi"
-                    class="btn btn-success btn-full" style="background:#256d3f;color:white;">
+                    class="btn btn-full" style="background:#256d3f;color:white; border:none; padding:8px; border-radius:5px; cursor:pointer; font-weight:600;">
               &#10003; Konfirmasi Pembayaran
             </button>
             <button type="submit" name="action" value="tolak"
-                    class="btn btn-danger btn-full"
+                    class="btn btn-full" style="background:#9b2020;color:white; border:none; padding:8px; border-radius:5px; cursor:pointer; font-weight:600;"
                     onclick="return confirm('Yakin ingin menolak pembayaran ini?')">
               &#10006; Tolak Pembayaran
             </button>
@@ -269,13 +237,12 @@ if (!$insert) {
 
   <?php if (empty($pembayaran)): ?>
   <div style="text-align:center;padding:60px 0;">
-    <div style="font-size:56px;margin-bottom:14px;">&#10003;</div>
-    <p style="color:var(--muted);">Tidak ada pembayaran yang menunggu konfirmasi.</p>
+    <div style="font-size:56px;margin-bottom:14px;color:#256d3f;">&#10003;</div>
+    <p style="color:var(--muted); font-weight:500;">Tidak ada pembayaran yang menunggu konfirmasi.</p>
   </div>
   <?php endif; ?>
 </div>
 
-<!-- Modal preview bukti -->
 <div id="modal-bukti" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.7);z-index:300;align-items:center;justify-content:center;"
      onclick="this.style.display='none'">
   <img id="bukti-full" src="" style="max-width:90vw;max-height:90vh;border-radius:8px;">

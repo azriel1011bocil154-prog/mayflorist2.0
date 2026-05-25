@@ -14,24 +14,35 @@ if (empty($_SESSION['user'])) {
 
 if (!isset($_SESSION['cart'])) $_SESSION['cart'] = [];
 
-include 'includes/products.php';
-include 'koneksi.php'; // PASTI ada koneksi DB
+include 'includes/products.php'; // formatRupiah() diambil dari sini
+include 'koneksi.php'; // Hubungkan ke database
 
 $cart     = $_SESSION['cart'];
 $subtotal = array_sum(array_map(fn($i) => $i['price'] * $i['qty'], $cart));
 $errors   = [];
 
-// ── DP config (TBD mitra — sementara 50%) ──
+// ── DP config (Sementara 50%) ──
 $dp_persen  = 50;
+
+// ── Ambil data user secara real-time berdasarkan struktur tabel user kamu ──
+$id_user = $_SESSION['user']['id_user'] ?? 0;
+$query_user = $conn->prepare("SELECT id_user, nama_user, telepon_user, alamat_user FROM user WHERE id_user = ?");
+$query_user->bind_param("i", $id_user);
+$query_user->execute();
+$result_user = $query_user->get_result();
+$user_db = $result_user->fetch_assoc();
+
+// Gabungkan data session dan database ter-update
+$user = array_merge($_SESSION['user'], $user_db ? $user_db : []);
 
 // ── Handle POST ──
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    $nama       = trim($_POST['nama']        ?? '');
-    $telepon    = trim($_POST['telepon']     ?? '');
-    $alamat     = trim($_POST['alamat']      ?? '');
-    $jenis_kirim= $_POST['jenis_kirim']      ?? 'dikirim';
-    $catatan    = trim($_POST['catatan']     ?? '');
-    $jenis_bayar= $_POST['jenis_bayar']      ?? 'lunas'; // 'dp' atau 'lunas'
+    $nama        = trim($_POST['nama']        ?? '');
+    $telepon     = trim($_POST['telepon']     ?? '');
+    $alamat      = trim($_POST['alamat']      ?? '');
+    $jenis_kirim = $_POST['jenis_kirim']      ?? 'dikirim';
+    $catatan     = trim($_POST['catatan']     ?? '');
+    $jenis_bayar = $_POST['jenis_bayar']      ?? 'lunas'; // 'dp' atau 'lunas'
 
     // Validasi
     if (!$nama)                                     $errors[] = 'Nama lengkap wajib diisi.';
@@ -40,87 +51,85 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if (empty($cart))                               $errors[] = 'Keranjang belanja kosong.';
 
     if (empty($errors)) {
-    $ongkir   = ($jenis_kirim === 'dikirim') ? 15000 : 0;
-    $total    = $subtotal + $ongkir;
+        $ongkir   = ($jenis_kirim === 'dikirim') ? 15000 : 0;
+        $total    = $subtotal + $ongkir;
+        $tanggal  = date('Y-m-d'); // Menggunakan format tipe data 'date' (YYYY-MM-DD)
 
-    $id_user = $_SESSION['user']['id_user'] ?? 0;
-    $tanggal = date('Y-m-d H:i:s');
+        // Hitung total produk
+        $total_produk = array_sum(array_column($cart, 'qty'));
 
-    // hitung total produk
-    $total_produk = array_sum(array_column($cart, 'qty'));
+        // INSERT ke tabel pesanan (status_pesanan default 'belum_bayar' otomatis dari DB)
+        $stmt = $conn->prepare("
+        INSERT INTO pesanan (
+            id_user,
+            tanggal_pesanan,
+            alamat_pesanan,
+            total_produk,
+            total_harga,
+            metode_pengiriman,
+            catatan
+        ) VALUES (?, ?, ?, ?, ?, ?, ?)
+        ");
 
-    $stmt = $conn->prepare("
-    INSERT INTO pesanan (
-        id_user,
-        tanggal_pesanan,
-        alamat_pesanan,
-        total_produk,
-        total_harga,
-        metode_pengiriman,
-        catatan
-    ) VALUES (?, ?, ?, ?, ?, ?, ?)
-    ");
+        $stmt->bind_param(
+            "issiiss",
+            $id_user,
+            $tanggal,
+            $alamat,
+            $total_produk,
+            $total,
+            $jenis_kirim,
+            $catatan
+        );
 
-    $stmt->bind_param(
-    "issiiss",
-    $id_user,
-    $tanggal,
-    $alamat,
-    $total_produk,
-    $total,
-    $jenis_kirim,
-    $catatan
-    );
+        $stmt->execute();
+        $id_pesanan = $stmt->insert_id;
 
-    $stmt->execute();
+        // SIMPAN DETAIL PRODUK (Ke tabel detail_pesanan, sudah_rating diisi default 0)
+        foreach ($cart as $item) {
+            $stmt2 = $conn->prepare("
+                INSERT INTO detail_pesanan
+                (id_pesanan, id_produk, jumlah_produk, harga_produk, total_harga, sudah_rating)
+                VALUES (?, ?, ?, ?, ?, 0)
+            ");
 
-    $id_pesanan = $stmt->insert_id;
+            $total_item = $item['price'] * $item['qty'];
 
-    // SIMPAN DETAIL PRODUK (ORDER ITEMS)
-    foreach ($cart as $item) {
-      $stmt2 = $conn->prepare("
-          INSERT INTO detail_pesanan
-          (id_pesanan, id_produk, jumlah_produk, harga_produk, total_harga)
-          VALUES (?, ?, ?, ?, ?)
-      ");
+            $stmt2->bind_param(
+                "iiiii",
+                $id_pesanan,
+                $item['id'],
+                $item['qty'],
+                $item['price'],
+                $total_item
+            );
 
-      $total_item = $item['price'] * $item['qty'];
+            $stmt2->execute();
+        } 
 
-      $stmt2->bind_param(
-          "iiiii",
-          $id_pesanan,
-          $item['id'],
-          $item['qty'],
-          $item['price'],
-          $total_item
-      );
+        // Format nomor order unik
+        $no_order = 'FLR-' . str_pad($id_pesanan, 5, '0', STR_PAD_LEFT);
 
-      $stmt2->execute();
-    } 
+        // Simpan ke session order sementara
+        $_SESSION['pending_order'] = [
+            'no_order'    => $no_order,
+            'cart'        => $cart,
+            'nama'        => $nama,
+            'telepon'     => $telepon,
+            'alamat'      => $alamat,
+            'jenis_kirim' => $jenis_kirim,
+            'catatan'     => $catatan,
+            'subtotal'    => $subtotal,
+            'ongkir'      => $ongkir,
+            'total'       => $total,
+        ];
 
-    // session tetap seperti sebelumnya (TIDAK DIUBAH UI)
-    $_SESSION['pending_order'] = [
-        'no_order'    => $no_order,
-        'cart'        => $cart,
-        'nama'        => $nama,
-        'telepon'     => $telepon,
-        'alamat'      => $alamat,
-        'jenis_kirim' => $jenis_kirim,
-        'catatan'     => $catatan,
-        'subtotal'    => $subtotal,
-        'ongkir'      => $ongkir,
-        'total'       => $total,
-    ];
+        $_SESSION['cart'] = [];
 
-    $_SESSION['cart'] = [];
-
-    header("Location: bayar.php?no=$id_pesanan&jenis=$jenis_bayar");
-    exit;
+        header("Location: bayar.php?no=$id_pesanan&jenis=$jenis_bayar");
+        exit;
+    }
 }
-}
-
-// Prefill dari data profil user
-$user = $_SESSION['user'];
 
 $page_title = 'Checkout — Fleuriste';
 $active_nav = '';
@@ -155,10 +164,8 @@ include 'includes/header.php';
   <form method="POST" action="checkout.php" id="checkoutForm">
     <div class="checkout-layout">
 
-      <!-- ── KIRI ── -->
       <div style="display:flex;flex-direction:column;gap:18px;">
 
-        <!-- Informasi Pengiriman -->
         <div class="checkout-box">
           <h2 class="checkout-box-title">Informasi Pengiriman</h2>
 
@@ -166,17 +173,15 @@ include 'includes/header.php';
             <div class="form-group">
               <label>Nama Lengkap <span style="color:var(--rose)">*</span></label>
               <input type="text" name="nama" class="form-control"
-                     value="<?= htmlspecialchars($_POST['nama'] ?? $user['nama_user']) ?>" required>
+                     value="<?= htmlspecialchars($_POST['nama'] ?? $user['nama_user'] ?? '') ?>" required>
             </div>
             <div class="form-group">
               <label>Nomor Telepon <span style="color:var(--rose)">*</span></label>
-              <input type="tel" name="telepon" class="form-control"
-                     placeholder="08xx-xxxx-xxxx"
-                     value="<?= htmlspecialchars($_POST['telepon'] ?? '') ?>" required>
+              <input type="tel" name="telepon" class="form-control" placeholder="08xx-xxxx-xxxx"
+                     value="<?= htmlspecialchars($_POST['telepon'] ?? $user['telepon_user'] ?? '') ?>" required>
             </div>
           </div>
 
-          <!-- Metode Pengambilan -->
           <div class="form-group">
             <label>Metode Pengambilan</label>
             <div style="display:flex;gap:16px;margin-top:6px;">
@@ -197,8 +202,7 @@ include 'includes/header.php';
 
           <div class="form-group" id="alamat-group">
             <label>Alamat Lengkap <span style="color:var(--rose)">*</span></label>
-            <textarea name="alamat" class="form-control" rows="2"
-                      placeholder="Jl. Nama Jalan No. X, Kota..."><?= htmlspecialchars($_POST['alamat'] ?? '') ?></textarea>
+            <textarea name="alamat" class="form-control" rows="2" placeholder="Jl. Nama Jalan No. X, Kota..."><?= htmlspecialchars($_POST['alamat'] ?? $user['alamat_user'] ?? '') ?></textarea>
           </div>
 
           <div class="form-group">
@@ -209,7 +213,6 @@ include 'includes/header.php';
           </div>
         </div>
 
-        <!-- Jenis Pembayaran: DP atau Lunas -->
         <div class="checkout-box" id="jenis-bayar-box">
           <h2 class="checkout-box-title">Jenis Pembayaran</h2>
           <p style="font-size:13px;color:var(--muted);margin-bottom:14px;">
@@ -238,16 +241,10 @@ include 'includes/header.php';
               <div style="font-size:11px;color:var(--muted);margin-top:2px;">Sisa dibayar sebelum kirim</div>
             </label>
           </div>
-          <div id="dp-cash-warning" style="display:none;margin-top:10px;
-               background:#fff8e1;color:#7d5a00;border:1px solid #ffe082;
-               border-radius:7px;padding:9px 12px;font-size:13px;">
-            &#9888; Pembayaran DP tidak tersedia untuk Cash di Toko.
-          </div>
         </div>
 
       </div>
 
-      <!-- ── KANAN: Ringkasan ── -->
       <aside class="checkout-box" style="align-self:start;position:sticky;top:76px;">
         <h2 class="checkout-box-title">Ringkasan Pesanan</h2>
 
@@ -280,7 +277,6 @@ include 'includes/header.php';
           <span style="color:var(--rose);" id="total-txt"><?= formatRupiah($subtotal + 15000) ?></span>
         </div>
 
-        <!-- Bayar sekarang -->
         <div style="margin-top:14px;padding:12px;background:var(--petal);border-radius:8px;
                     display:flex;justify-content:space-between;align-items:center;">
           <span style="font-size:13px;color:var(--muted);">Bayar Sekarang</span>
@@ -341,15 +337,6 @@ textarea.form-control { resize: vertical; min-height: 72px; }
 .radio-opt:has(input:checked) { border-color: var(--rose); background: var(--rose-light); }
 .radio-opt input { accent-color: var(--rose); }
 
-.metode-card {
-  display: flex; align-items: center; gap: 12px;
-  border: 1.5px solid var(--border); border-radius: 8px;
-  padding: 12px 16px; cursor: pointer; transition: all .15s;
-}
-.metode-card:hover { border-color: var(--rose); }
-.metode-card.selected { border-color: var(--rose); background: var(--rose-light); }
-.metode-card input[type="radio"] { display: none; }
-
 .jenis-card {
   display: flex; flex-direction: column; align-items: center;
   text-align: center; padding: 16px 12px;
@@ -378,17 +365,12 @@ function toggleAlamat(val) {
   updateTotals();
 }
 
-
 function selectJenis(card, val) {
   document.querySelectorAll('.jenis-card').forEach(c => c.classList.remove('selected'));
   card.classList.add('selected');
   card.querySelector('input').checked = true;
   curJenis = val;
   updateTotals();
-  // Tampil warning kalau cash + dp
-  const metode = document.querySelector('input[name="metode_bayar"]:checked')?.value;
-  document.getElementById('dp-cash-warning').style.display =
-    (val === 'dp' && metode === 'cash') ? 'block' : 'none';
 }
 
 function updateTotals() {
@@ -401,10 +383,9 @@ function updateTotals() {
   document.getElementById('bayar-sekarang-txt').textContent = 'Rp ' + bayar.toLocaleString('id-ID');
 }
 
-// Init
 document.addEventListener('DOMContentLoaded', () => {
   const jenis = document.querySelector('input[name="jenis_kirim"]:checked');
   if (jenis) toggleAlamat(jenis.value);
   updateTotals();
 });
-</script>
+</script> 
