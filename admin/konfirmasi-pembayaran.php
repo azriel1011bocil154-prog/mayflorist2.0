@@ -27,53 +27,75 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 }
 
 // ── Dummy data pembayaran masuk (nanti: SELECT dari DB WHERE status = 'pending_konfirmasi') ──
-$pembayaran = [
-  [
-    'id'          => 1,
-    'no_order'    => 'FLR-A1B2C3D4',
-    'tgl_bayar'   => '10 Mei 2026 14:22',
-    'nama_user'   => 'Dewi Anggraini',
-    'jenis'       => 'dp',
-    'nominal'     => 155000,
-    'total_order' => 310000,
-    'metode'      => 'Transfer Bank',
-    'bukti'       => 'assets/images/bukti-dummy.jpg', // nanti path file upload
-    'catatan'     => 'Sudah transfer jam 14.00',
-    'status'      => 'pending_konfirmasi',
-    'items'       => [['name'=>'Pink Hydrangea Box','qty'=>1]],
-  ],
-  [
-    'id'          => 2,
-    'no_order'    => 'FLR-E5F6G7H8',
-    'tgl_bayar'   => '09 Mei 2026 10:05',
-    'nama_user'   => 'Budi Santoso',
-    'jenis'       => 'lunas',
-    'nominal'     => 345000,
-    'total_order' => 345000,
-    'metode'      => 'QRIS',
-    'bukti'       => '',
-    'catatan'     => '',
-    'status'      => 'pending_konfirmasi',
-    'items'       => [['name'=>'Buket Mawar Merah','qty'=>1],['name'=>'Sunflower Happiness','qty'=>1]],
-  ],
-  [
-    'id'          => 3,
-    'no_order'    => 'FLR-M3N4O5P6',
-    'tgl_bayar'   => '08 Mei 2026 09:30',
-    'nama_user'   => 'Rina Susanti',
-    'jenis'       => 'pelunasan',
-    'nominal'     => 170000,
-    'total_order' => 340000,
-    'metode'      => 'Transfer Bank',
-    'bukti'       => '',
-    'catatan'     => 'Pelunasan pesanan wisuda',
-    'status'      => 'pending_konfirmasi',
-    'items'       => [['name'=>'Graduation Mega Bouquet','qty'=>1]],
-  ],
+include '../koneksi.php';
+
+$pembayaran = [];
+
+$query = mysqli_query($conn, "
+    SELECT 
+        p.id_pesanan,
+        p.id_user,
+        p.tanggal_pesanan,
+        p.total_harga,
+        p.status_pesanan,
+        p.metode_pengiriman,
+        p.catatan,
+        u.nama_user
+    FROM pesanan p
+    LEFT JOIN user u ON p.id_user = u.id_user
+    ORDER BY p.id_pesanan DESC
+");
+
+while ($row = mysqli_fetch_assoc($query)) {
+
+    // ambil detail item
+    $items = [];
+
+    $detail = mysqli_query($conn, "
+        SELECT dp.jumlah_produk, pr.nama_produk
+        FROM detail_pesanan dp
+        LEFT JOIN produk pr ON dp.id_produk = pr.id_produk
+        WHERE dp.id_pesanan = '{$row['id_pesanan']}'
+    ");
+
+    while ($d = mysqli_fetch_assoc($detail)) {
+        $items[] = [
+            'name' => $d['nama_produk'],
+            'qty'  => $d['jumlah_produk']
+        ];
+    }
+
+    $pembayaran[] = [
+        'id'          => $row['id_pesanan'],
+        'no_order'    => 'FLR-' . str_pad($row['id_pesanan'], 5, '0', STR_PAD_LEFT),
+        'tgl_bayar'   => date('d M Y H:i', strtotime($row['tanggal_pesanan'])),
+        'nama_user'   => $row['nama_user'],
+        'jenis'       => 'lunas',
+        'nominal'     => $row['total_harga'],
+        'total_order' => $row['total_harga'],
+        'metode'      => $row['metode_pengiriman'],
+        'bukti'       => '',
+        'catatan'     => $row['catatan'],
+        'status'      => $row['status_pesanan'],
+        'items'       => $items
+    ];
+}
+
+$jenis_label = [
+    'dp' => 'DP',
+    'lunas' => 'Lunas',
+    'pelunasan' => 'Pelunasan'
 ];
 
-$jenis_label = ['dp'=>'DP','lunas'=>'Lunas','pelunasan'=>'Pelunasan'];
-$jenis_color = ['dp'=>'var(--rose)','lunas'=>'var(--moss)','pelunasan'=>'var(--gold)'];
+$jenis_color = [
+    'dp' => 'var(--rose)',
+    'lunas' => 'var(--moss)',
+    'pelunasan' => 'var(--gold)'
+];
+
+if (!$insert) {
+    die("ERROR INSERT: " . $conn->error);
+} 
 ?>
 
 <div class="page-body">
@@ -101,7 +123,7 @@ $jenis_color = ['dp'=>'var(--rose)','lunas'=>'var(--moss)','pelunasan'=>'var(--g
           <span style="font-size:12px;color:var(--muted);">&#128197; <?= $b['tgl_bayar'] ?></span>
         </div>
         <span style="font-size:12px;background:#fff8e1;color:#7d5a00;padding:3px 10px;border-radius:100px;font-weight:600;">
-          &#128336; Menunggu Konfirmasi
+          &#128336; <?= htmlspecialchars($b['status']) ?>
         </span>
       </div>
 

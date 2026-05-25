@@ -13,62 +13,160 @@ if (empty($_SESSION['user'])) {
 $user  = $_SESSION['user'];
 $alert = '';
 
-// ── Dummy data user lengkap (nanti dari DB: SELECT * FROM users WHERE id_user = ?) ──
-$user_data = [
-    'id_user'       => $user['id_user'],
-    'nama_user'     => $user['nama_user'],
-    'jenis_kelamin' => 'Perempuan',
-    'alamat_user'   => 'Jl. Melati No. 12, Jakarta Selatan',
-    'telepon_user'  => '0812-3456-7890',
-    'email_user'    => $user['email_user'],
-    'role'          => $user['role'],
-];
+include 'koneksi.php';
 
+// ambil data user dari database
+$id_user = $user['id_user'];
+
+$queryUser = mysqli_query($conn, "
+    SELECT *
+    FROM user
+    WHERE id_user = '$id_user'
+");
+
+$user_data = mysqli_fetch_assoc($queryUser);
+
+// jika user tidak ditemukan
+if (!$user_data) {
+    session_destroy();
+    header('Location: login.php');
+    exit;
+}
+
+// =========================
+// UPDATE PROFIL
+// =========================
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+
     $action = $_POST['action'] ?? '';
 
+    // =========================
+    // UPDATE DATA PROFIL
+    // =========================
     if ($action === 'update_profil') {
-        $nama    = trim($_POST['nama_user']    ?? '');
-        $jk      = $_POST['jenis_kelamin']     ?? '';
-        $alamat  = trim($_POST['alamat_user']  ?? '');
+
+        $nama    = trim($_POST['nama_user'] ?? '');
+        $jk      = trim($_POST['jenis_kelamin'] ?? '');
+        $alamat  = trim($_POST['alamat_user'] ?? '');
         $telepon = trim($_POST['telepon_user'] ?? '');
-        $email   = trim($_POST['email_user']   ?? '');
+        $email   = trim($_POST['email_user'] ?? '');
 
         if (!$nama || !$email) {
-            $alert = ['type'=>'error', 'msg'=>'Nama dan email wajib diisi.'];
+
+            $alert = [
+                'type' => 'error',
+                'msg'  => 'Nama dan email wajib diisi.'
+            ];
+
         } else {
-            // Nanti: UPDATE users SET ... WHERE id_user = ?
-            $_SESSION['user']['nama_user']  = $nama;
-            $_SESSION['user']['email_user'] = $email;
-            $user_data = array_merge($user_data, compact('nama','jk','alamat','telepon','email'));
-            $user_data['nama_user']     = $nama;
-            $user_data['email_user']    = $email;
-            $user_data['jenis_kelamin'] = $jk;
-            $user_data['alamat_user']   = $alamat;
-            $user_data['telepon_user']  = $telepon;
-            $alert = ['type'=>'success', 'msg'=>'Profil berhasil diperbarui!'];
+
+            $update = mysqli_query($conn, "
+                UPDATE user
+                SET
+                    nama_user     = '$nama',
+                    jenis_kelamin = '$jk',
+                    alamat_user   = '$alamat',
+                    telepon_user  = '$telepon',
+                    email_user    = '$email'
+                WHERE id_user = '$id_user'
+            ");
+
+            if ($update) {
+
+                // update session
+                $_SESSION['user']['nama_user']  = $nama;
+                $_SESSION['user']['email_user'] = $email;
+
+                // refresh data
+                $queryUser = mysqli_query($conn, "
+                    SELECT *
+                    FROM user
+                    WHERE id_user = '$id_user'
+                ");
+
+                $user_data = mysqli_fetch_assoc($queryUser);
+
+                $alert = [
+                    'type' => 'success',
+                    'msg'  => 'Profil berhasil diperbarui!'
+                ];
+
+            } else {
+
+                $alert = [
+                    'type' => 'error',
+                    'msg'  => 'Gagal memperbarui profil.'
+                ];
+            }
         }
     }
 
+    // =========================
+    // UBAH PASSWORD
+    // =========================
     if ($action === 'ubah_password') {
-        $lama    = $_POST['pass_lama']   ?? '';
-        $baru    = $_POST['pass_baru']   ?? '';
-        $konfirm = $_POST['pass_konfirm']?? '';
+
+        $lama    = $_POST['pass_lama'] ?? '';
+        $baru    = $_POST['pass_baru'] ?? '';
+        $konfirm = $_POST['pass_konfirm'] ?? '';
 
         if (!$lama || !$baru || !$konfirm) {
-            $alert = ['type'=>'error', 'msg'=>'Semua kolom kata sandi wajib diisi.'];
+
+            $alert = [
+                'type' => 'error',
+                'msg'  => 'Semua kolom password wajib diisi.'
+            ];
+
         } elseif (strlen($baru) < 8) {
-            $alert = ['type'=>'error', 'msg'=>'Kata sandi baru minimal 8 karakter.'];
+
+            $alert = [
+                'type' => 'error',
+                'msg'  => 'Password baru minimal 8 karakter.'
+            ];
+
         } elseif ($baru !== $konfirm) {
-            $alert = ['type'=>'error', 'msg'=>'Konfirmasi kata sandi tidak cocok.'];
+
+            $alert = [
+                'type' => 'error',
+                'msg'  => 'Konfirmasi password tidak cocok.'
+            ];
+
         } else {
-            // Nanti: verifikasi pass_lama, lalu UPDATE password_user WHERE id_user = ?
-            $alert = ['type'=>'success', 'msg'=>'Kata sandi berhasil diubah!'];
+
+            // cek password lama
+            if ($lama !== $user_data['password_user']) {
+
+                $alert = [
+                    'type' => 'error',
+                    'msg'  => 'Password lama salah.'
+                ];
+
+            } else {
+
+                $updatePass = mysqli_query($conn, "
+                    UPDATE user
+                    SET password_user = '$baru'
+                    WHERE id_user = '$id_user'
+                ");
+
+                if ($updatePass) {
+
+                    $alert = [
+                        'type' => 'success',
+                        'msg'  => 'Password berhasil diubah!'
+                    ];
+
+                } else {
+
+                    $alert = [
+                        'type' => 'error',
+                        'msg'  => 'Gagal mengubah password.'
+                    ];
+                }
+            }
         }
     }
 }
-
-include 'includes/products.php';
 $page_title = 'Profil Saya — Fleuriste';
 $active_nav = '';
 include 'includes/header.php';
@@ -141,8 +239,8 @@ include 'includes/header.php';
               <div class="form-group">
                 <label>Jenis Kelamin</label>
                 <select name="jenis_kelamin" class="form-control">
-                  <option value="Laki-laki"  <?= $user_data['jenis_kelamin'] === 'Laki-laki'  ? 'selected' : '' ?>>Laki-laki</option>
-                  <option value="Perempuan"  <?= $user_data['jenis_kelamin'] === 'Perempuan'  ? 'selected' : '' ?>>Perempuan</option>
+                  <option value="laki-laki"  <?= $user_data['jenis_kelamin'] === 'laki-laki'  ? 'selected' : '' ?>>Laki-laki</option>
+                  <option value="perempuan"  <?= $user_data['jenis_kelamin'] === 'perempuan'  ? 'selected' : '' ?>>Perempuan</option>
                 </select>
               </div>
             </div>

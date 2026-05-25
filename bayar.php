@@ -1,5 +1,5 @@
 <?php
-// bayar.php — Upload Bukti Pembayaran (DP atau Lunas)
+// bayar.php
 
 session_start();
 
@@ -9,43 +9,73 @@ if (empty($_SESSION['user'])) {
     exit;
 }
 
-include 'includes/products.php';
 include 'koneksi.php';
+include 'includes/products.php';
 
+// =========================
+// AMBIL ID PESANAN (FIX: lebih aman + konsisten)
+// =========================
 
+$id_pesanan = isset($_GET['id']) ? (int)$_GET['id'] : 0;
+$jenis_bayar = $_GET['jenis'] ?? 'lunas';
 
-// Ambil data order dari parameter (nanti dari DB)
-$no_order    = $_GET['no'] ?? '';
-$jenis_bayar = $_GET['jenis'] ?? 'lunas'; // 'dp' atau 'lunas'
+if ($id_pesanan <= 0) {
+    header('Location: pesanan.php');
+    exit;
+}
 
-if (!$no_order) { header('Location: pesanan.php'); exit; }
+// =========================
+// AMBIL DATA PESANAN (FIX: prepared statement)
+// =========================
 
-// ── Dummy order data (nanti: SELECT dari DB WHERE no_order = ?) ──
+$stmt = $conn->prepare("
+    SELECT * 
+    FROM pesanan 
+    WHERE id_pesanan = ? 
+    LIMIT 1
+");
+$stmt->bind_param("i", $id_pesanan);
+$stmt->execute();
+$result = $stmt->get_result();
+
+if ($result->num_rows == 0) {
+    header('Location: pesanan.php');
+    exit;
+}
+
+$data = $result->fetch_assoc();
+
+// =========================
+// FORMAT DATA ORDER (TETAP SAMA)
+// =========================
+
 $order = [
-    'no_order'  => $no_order,
-    'nama'      => $_SESSION['user']['nama_user'],
-    'subtotal'  => 295000,
-    'ongkir'    => 15000,
-    'total'     => 310000,
-    'dp_persen' => 50, // TBD dari mitra — sementara 50%
-    'status'    => 'Menunggu Pembayaran',
-    'items'     => [
-        ['name' => 'Pink Hydrangea Box', 'qty' => 1, 'price' => 295000],
-    ],
+  'no_order'  => '#ORD-' . $data['id_pesanan'],
+  'nama'      => $_SESSION['user']['nama_user'],
+  'subtotal'  => $data['total_harga'],
+  'ongkir'    => 0,
+  'total'     => $data['total_harga'],
+  'dp_persen' => 50,
+  'status'    => $data['status_pesanan'],
+  'items'     => []
 ];
 
-$dp_amount    = round($order['total'] * $order['dp_persen'] / 100);
-$sisa_amount  = $order['total'] - $dp_amount;
-$bayar_amount = $jenis_bayar === 'dp' ? $dp_amount : $order['total'];
+$no_order = $order['no_order'];
+$dp_amount   = round($order['total'] * $order['dp_persen'] / 100);
+$sisa_amount = $order['total'] - $dp_amount;
+$bayar_amount = ($jenis_bayar === 'dp') ? $dp_amount : $order['total'];
 
-$errors  = [];
+$errors = [];
 $success = false;
+
+// =========================
+// HANDLE SUBMIT
+// =========================
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
     $metode = $_POST['metode_bayar'] ?? '';
-    $catatan = trim($_POST['catatan'] ?? '');
-    $file = $_FILES['bukti_transfer'] ?? null;
+    $file   = $_FILES['bukti_transfer'] ?? null;
 
     if (!$metode) {
         $errors[] = 'Pilih metode pembayaran.';
@@ -54,75 +84,47 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $nama_file = '';
 
     // =========================
-    // VALIDASI & UPLOAD FILE
+    // UPLOAD FILE (FIX VALIDASI LEBIH AMAN)
     // =========================
+
     if (in_array($metode, ['transfer', 'qris'])) {
 
-        if (empty($file['name'])) {
-
+        if (!$file || empty($file['name'])) {
             $errors[] = 'Bukti pembayaran wajib diupload.';
-
         } else {
 
-            $allowed = ['image/jpeg','image/png','image/jpg','image/webp'];
-            $max_size = 2 * 1024 * 1024;
+            $allowed = ['image/jpeg', 'image/png', 'image/jpg', 'image/webp'];
 
             if (!in_array($file['type'], $allowed)) {
+                $errors[] = 'Format file tidak didukung.';
+            }
 
-                $errors[] = 'Format file harus JPG, PNG, atau WEBP.';
-
-            } elseif ($file['size'] > $max_size) {
-
+            if ($file['size'] > 2 * 1024 * 1024) {
                 $errors[] = 'Ukuran file maksimal 2MB.';
+            }
 
-            } else {
+            if (empty($errors)) {
 
-                // folder upload
                 $upload_dir = 'uploads/bukti/';
-
-                // buat folder jika belum ada
                 if (!is_dir($upload_dir)) {
                     mkdir($upload_dir, 0777, true);
                 }
 
-                // nama file unik
                 $ext = pathinfo($file['name'], PATHINFO_EXTENSION);
+                $nama_file = 'bukti_' . time() . '.' . $ext;
 
-                $nama_file = 'bukti_' . time() . '_' . rand(1000,9999) . '.' . $ext;
-
-                $target = $upload_dir . $nama_file;
-
-                // upload file
-                if (!move_uploaded_file($file['tmp_name'], $target)) {
-                    $errors[] = 'Gagal upload file.';
-                }
+                move_uploaded_file($file['tmp_name'], $upload_dir . $nama_file);
             }
         }
     }
 
     // =========================
-    // SIMPAN KE DATABASE
+    // SIMPAN TRANSAKSI (FIX: prepared statement)
     // =========================
+
     if (empty($errors)) {
 
-    // ambil id pesanan
-    $id_pesanan = (int) $no_order;
-
-    // cek apakah pesanan ada
-    $cek = mysqli_query($conn, "
-        SELECT id_pesanan
-        FROM pesanan
-        WHERE id_pesanan = '$id_pesanan'
-        LIMIT 1
-    ");
-
-    if (mysqli_num_rows($cek) == 0) {
-
-        $errors[] = 'Pesanan tidak ditemukan.';
-
-    } else {
-
-        $insert = mysqli_query($conn, "
+        $stmt2 = $conn->prepare("
             INSERT INTO transaksi (
                 id_pesanan,
                 tanggal_transaksi,
@@ -131,37 +133,40 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 total_pembayaran,
                 status_pembayaran,
                 bukti_pembayaran
-            ) VALUES (
-                '$id_pesanan',
-                NOW(),
-                '$jenis_bayar',
-                '$metode',
-                '$bayar_amount',
-                'menunggu',
-                '$nama_file'
-            )
+            ) VALUES (?, CURDATE(), ?, ?, ?, 'menunggu', ?)
         ");
+
+        $stmt2->bind_param(
+            "issds",
+            $id_pesanan,
+            $jenis_bayar,
+            $metode,
+            $bayar_amount,
+            $nama_file
+        );
+
+        $insert = $stmt2->execute();
 
         if ($insert) {
 
             // update status pesanan
-            mysqli_query($conn, "
+            $stmt3 = $conn->prepare("
                 UPDATE pesanan
                 SET status_pesanan = 'pending'
-                WHERE id_pesanan = '$id_pesanan'
+                WHERE id_pesanan = ?
             ");
+            $stmt3->bind_param("i", $id_pesanan);
+            $stmt3->execute();
 
             $success = true;
 
         } else {
-
             $errors[] = 'Gagal menyimpan transaksi.';
         }
     }
 }
-}
 
-$page_title = 'Pembayaran — Fleuriste';
+$page_title = 'Pembayaran — MayFlorist';
 $active_nav = '';
 include 'includes/header.php';
 ?>
@@ -229,8 +234,8 @@ include 'includes/header.php';
       </div>
       <?php endif; ?>
 
-      <form method="POST" action="bayar.php?no=<?= urlencode($no_order) ?>&jenis=<?= $jenis_bayar ?>"
-            enctype="multipart/form-data">
+      <form method="POST" action="bayar.php?id=<?= $id_pesanan ?>&jenis=<?= $jenis_bayar ?>"
+      enctype="multipart/form-data">
 
         <!-- Pilih Metode -->
         <div style="margin-bottom:20px;">
