@@ -4,6 +4,7 @@
 $page_title  = 'Manajemen Pesanan — Admin Fleuriste';
 $active_menu = 'pesanan';
 include 'includes/header.php';
+require '../koneksi.php';
 
 // ── Handle status update ──
 $alert = '';
@@ -18,16 +19,56 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['update_status'])) {
 }
 
 // ── Dummy orders ──
-$all_orders = [
-  ['no'=>'#ORD-001','tgl_pesan'=>'10/05/2026','tgl_bayar'=>'10/05/2026','nama'=>'Siti Nurjanah', 'total'=>'Rp 185.000','status'=>'Selesai',                  'jenis_bayar'=>'lunas'],
-  ['no'=>'#ORD-002','tgl_pesan'=>'10/05/2026','tgl_bayar'=>'10/05/2026','nama'=>'Budi Santoso',  'total'=>'Rp 210.000','status'=>'Dikirim',                  'jenis_bayar'=>'lunas'],
-  ['no'=>'#ORD-003','tgl_pesan'=>'10/05/2026','tgl_bayar'=>'10/05/2026','nama'=>'Dewi Lestari',  'total'=>'Rp 325.000','status'=>'Diproses',                 'jenis_bayar'=>'dp'],
-  ['no'=>'#ORD-004','tgl_pesan'=>'10/05/2026','tgl_bayar'=>'10/05/2026','nama'=>'Andi Pratama',  'total'=>'Rp 175.000','status'=>'Selesai',                  'jenis_bayar'=>'lunas'],
-  ['no'=>'#ORD-005','tgl_pesan'=>'09/05/2026','tgl_bayar'=>'09/05/2026','nama'=>'Rina Susanti',  'total'=>'Rp 295.000','status'=>'DP Dikonfirmasi',          'jenis_bayar'=>'dp'],
-  ['no'=>'#ORD-006','tgl_pesan'=>'09/05/2026','tgl_bayar'=>'09/05/2026','nama'=>'Hendra Wijaya', 'total'=>'Rp 145.000','status'=>'Menunggu Pelunasan',       'jenis_bayar'=>'dp'],
-  ['no'=>'#ORD-007','tgl_pesan'=>'08/05/2026','tgl_bayar'=>'08/05/2026','nama'=>'Maya Putri',    'total'=>'Rp 380.000','status'=>'Menunggu Konfirmasi Lunas','jenis_bayar'=>'dp'],
-  ['no'=>'#ORD-008','tgl_pesan'=>'08/05/2026','tgl_bayar'=>'08/05/2026','nama'=>'Farhan Adilah', 'total'=>'Rp 210.000','status'=>'Pending',                  'jenis_bayar'=>'lunas'],
-];
+// ── Ambil data pesanan dari database ──
+$query = mysqli_query($conn, "
+  SELECT 
+    p.id_pesanan,
+    p.id_user,
+    p.tanggal_pesanan,
+    p.total_harga,
+    p.status_pesanan,
+    t.jenis_pembayaran,
+    u.nama_user
+  FROM pesanan p
+  LEFT JOIN user u 
+    ON p.id_user = u.id_user
+  LEFT JOIN transaksi t
+    ON p.id_pesanan = t.id_pesanan
+  ORDER BY p.id_pesanan DESC
+");
+
+$all_orders = [];
+
+while ($row = mysqli_fetch_assoc($query)) {
+
+  $all_orders[] = [
+
+    'no' => '#ORD-' . str_pad(
+      $row['id_pesanan'],
+      3,
+      '0',
+      STR_PAD_LEFT
+    ),
+
+    'tgl_pesan' => date(
+      'd/m/Y',
+      strtotime($row['tanggal_pesanan'])
+    ),
+
+    'nama' => $row['nama_user'],
+
+    'total' => 'Rp ' . number_format(
+      $row['total_harga'],
+      0,
+      ',',
+      '.'
+    ),
+
+    'status' => ucfirst($row['status_pesanan']),
+
+    'jenis_bayar' => $row['jenis_pembayaran']
+  ];
+}
 
 // ── Filter by status tab ──
 $status_filter = $_GET['status'] ?? 'Semua';
