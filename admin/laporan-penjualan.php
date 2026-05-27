@@ -19,40 +19,31 @@ $period = $_GET['period'] ?? 'hari';
 $where = "";
 
 if ($period == 'hari') {
-
   $where = "DATE(tanggal_transaksi) = CURDATE()";
-
 } elseif ($period == 'minggu') {
-
   $where = "YEARWEEK(tanggal_transaksi, 1) = YEARWEEK(CURDATE(), 1)";
-
 } elseif ($period == 'bulan') {
-
   $where = "MONTH(tanggal_transaksi) = MONTH(CURDATE())
             AND YEAR(tanggal_transaksi) = YEAR(CURDATE())";
-
 } elseif ($period == 'kustom') {
-
   $dari   = $_GET['dari'] ?? date('Y-m-01');
   $sampai = $_GET['sampai'] ?? date('Y-m-d');
 
-  $where = "DATE(tanggal_transaksi)
-            BETWEEN '$dari' AND '$sampai'";
+  $where = "DATE(tanggal_transaksi) BETWEEN '$dari' AND '$sampai'";
 }
 
 /*
 |--------------------------------------------------------------------------
-| TOTAL LAPORAN
+| TOTAL LAPORAN (Hanya Menghitung Arus Uang Masuk yang 'diterima')
 |--------------------------------------------------------------------------
 */
-
 $query_total = mysqli_query($conn, "
   SELECT
     COUNT(id_transaksi) AS jumlah_transaksi,
     SUM(total_pembayaran) AS total_pendapatan,
     AVG(total_pembayaran) AS rata_transaksi
   FROM transaksi
-  WHERE $where
+  WHERE $where AND status_pembayaran = 'diterima'
 ");
 
 if (!$query_total) {
@@ -67,10 +58,9 @@ $rata_transaksi   = $data_total['rata_transaksi'] ?? 0;
 
 /*
 |--------------------------------------------------------------------------
-| DETAIL TRANSAKSI
+| DETAIL TRANSAKSI (Menampilkan Semua Status untuk Keperluan Audit Log)
 |--------------------------------------------------------------------------
 */
-
 $query_invoice = mysqli_query($conn, "
   SELECT
     id_transaksi,
@@ -97,7 +87,6 @@ if (!$query_invoice) {
       <h1 style="font-size:20px;">Laporan Penjualan</h1>
     </div>
 
-    <!-- FILTER -->
     <div style="padding:14px 20px 0;">
       <div class="filter-tabs">
 
@@ -120,26 +109,25 @@ if (!$query_invoice) {
 
     <div class="card-body">
 
-      <!-- SUMMARY -->
       <div class="report-summary">
         <table>
 
           <tr>
-            <td>Total Pendapatan</td>
-            <td>
+            <td>Total Pendapatan (Uang Masuk)</td>
+            <td style="font-weight:700; color:#2e7d32;">
               Rp <?= number_format($total_pendapatan,0,',','.') ?>
             </td>
           </tr>
 
           <tr>
-            <td>Jumlah Transaksi</td>
+            <td>Jumlah Transaksi Sukses</td>
             <td>
               <?= $jumlah_transaksi ?> Transaksi
             </td>
           </tr>
 
           <tr>
-            <td>Rata-rata Transaksi</td>
+            <td>Rata-rata Pendapatan / Transaksi</td>
             <td>
               Rp <?= number_format($rata_transaksi,0,',','.') ?>
             </td>
@@ -148,7 +136,6 @@ if (!$query_invoice) {
         </table>
       </div>
 
-      <!-- FILTER KUSTOM -->
       <?php if ($period === 'kustom'): ?>
 
       <form method="GET"
@@ -182,7 +169,6 @@ if (!$query_invoice) {
 
       <?php endif; ?>
 
-      <!-- DETAIL -->
       <h3 style="font-size:15px;margin-bottom:12px;">
         Detail Transaksi
       </h3>
@@ -203,6 +189,12 @@ if (!$query_invoice) {
           </thead>
 
           <tbody>
+
+            <?php if (mysqli_num_rows($query_invoice) == 0): ?>
+            <tr>
+              <td colspan="6" style="text-align:center;color:var(--muted);padding:20px;">Tidak ada data transaksi pada periode ini.</td>
+            </tr>
+            <?php endif; ?>
 
             <?php while($inv = mysqli_fetch_assoc($query_invoice)) : ?>
 
@@ -231,7 +223,7 @@ if (!$query_invoice) {
               <td>
 
                 <?php
-                $badge = 'badge-pending';
+                $badge = 'badge-pending'; // Default untuk 'menunggu'
 
                 if ($inv['status_pembayaran'] == 'diterima') {
                   $badge = 'badge-selesai';

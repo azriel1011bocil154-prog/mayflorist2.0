@@ -1,31 +1,67 @@
 <?php
-// admin/index.php — Dashboard
+// admin/index.php — Dashboard Dinamis
 
 $page_title  = 'Dashboard — Admin MayFlorist';
 $active_menu = 'dashboard';
 include 'includes/header.php';
 
-// ── Dummy data ──
+// Hubungkan ke file koneksi databasemu
+include '../koneksi.php'; 
+
+// ==========================================
+// 1. QUERY AMBIL DATA KARTU STATISTIK (STAT CARDS)
+// ==========================================
+
+// A. Hitung Total Penjualan Hari Ini (Dari transaksi yang sudah 'diterima' admin)
+$q_hari_ini = mysqli_query($conn, "SELECT SUM(total_pembayaran) AS total FROM transaksi WHERE DATE(tanggal_transaksi) = CURDATE() AND status_pembayaran = 'diterima'");
+$data_hari_ini = mysqli_fetch_assoc($q_hari_ini);
+$total_hari_ini = $data_hari_ini['total'] ?? 0;
+
+// B. Hitung Total Pesanan Masuk Bulan Ini (Semua pesanan yang dibuat bulan berjalan)
+$q_bulan_ini = mysqli_query($conn, "SELECT COUNT(id_pesanan) AS total FROM pesanan WHERE MONTH(tanggal_pesanan) = MONTH(CURDATE()) AND YEAR(tanggal_pesanan) = YEAR(CURDATE())");
+$data_bulan_ini = mysqli_fetch_assoc($q_bulan_ini);
+$pesanan_bulan_ini = $data_bulan_ini['total'] ?? 0;
+
+// C. Hitung Pesanan Baru Masuk yang Perlu Tindakan (Status Pembayaran masih 'menunggu' verifikasi admin)
+$q_pesanan_baru = mysqli_query($conn, "SELECT COUNT(id_transaksi) AS total FROM transaksi WHERE status_pembayaran = 'menunggu'");
+$data_pesanan_baru = mysqli_fetch_assoc($q_pesanan_baru);
+$pesanan_baru = $data_pesanan_baru['total'] ?? 0;
+
+// Array Statistik untuk UI
 $stats = [
-  ['label' => 'Total Penjualan Hari Ini', 'value' => 'Rp 3.750.000', 'sub' => 'Rp 3.750.000',  'sub_icon' => '&#128200;'],
-  ['label' => 'Total Pesanan Bulan Ini',  'value' => '123 Pesanan',  'sub' => '123 Pesanan',    'sub_icon' => '&#128230;'],
-  ['label' => 'Pesanan Baru',             'value' => '5 Pesanan',    'sub' => 'Lihat Semua ▾',  'sub_icon' => '&#128276;'],
+  ['label' => 'Total Penjualan Hari Ini', 'value' => 'Rp ' . number_format($total_hari_ini, 0, ',', '.'), 'sub' => 'Uang Masuk Valid',  'sub_icon' => '&#128200;'],
+  ['label' => 'Total Pesanan Bulan Ini',  'value' => $pesanan_bulan_ini . ' Pesanan',   'sub' => 'Periode Bulan Ini',    'sub_icon' => '&#128230;'],
+  ['label' => 'Verifikasi Pembayaran',    'value' => $pesanan_baru . ' Menunggu',       'sub' => 'Perlu Validasi Struk', 'sub_icon' => '&#128276;'],
 ];
 
+
+// ==========================================
+// 2. QUERY GENERATE DATA GRAFIK BULANAN (TAHUN BERJALAN)
+// ==========================================
 $chart_labels = ['Jan','Feb','Mar','Apr','Mei','Jun','Jul','Agu','Sep','Okt','Nov','Des'];
-$chart_data   = [4200000, 5100000, 3800000, 6200000, 5500000, 7100000, 6300000, 8400000, 7200000, 9100000, 8700000, 10200000];
+$chart_data   = [];
+
+for ($m = 1; $m <= 12; $m++) {
+    $q_chart = mysqli_query($conn, "
+        SELECT SUM(total_pembayaran) AS total 
+        FROM transaksi 
+        WHERE MONTH(tanggal_transaksi) = $m 
+          AND YEAR(tanggal_transaksi) = YEAR(CURDATE()) 
+          AND status_pembayaran = 'diterima'
+    ");
+    $dt_chart = mysqli_fetch_assoc($q_chart);
+    $chart_data[] = (int)($dt_chart['total'] ?? 0);
+}
 ?>
 
 <div class="page-body">
 
-  <!-- ── PROMO BANNER HEADER ── -->
   <div class="card" style="margin-bottom:24px;">
     <div class="card-header">
-      <h2>Promo Banner</h2>
-      <button class="btn btn-outline btn-sm">+ Tambah Banner</button>
+      <h2>Ringkasan Toko</h2>
+      <button class="btn btn-outline btn-sm">+ Kelola Banner</button>
     </div>
 
-    <!-- Stat Cards inside banner card -->
     <div class="card-body" style="padding:20px;">
       <div class="stat-cards" style="margin-bottom:0;">
         <?php foreach ($stats as $s): ?>
@@ -41,7 +77,6 @@ $chart_data   = [4200000, 5100000, 3800000, 6200000, 5500000, 7100000, 6300000, 
     </div>
   </div>
 
-  <!-- ── GRAFIK PENJUALAN ── -->
   <div class="card" style="margin-bottom:24px;">
     <div class="card-header">
       <h2>Grafik Penjualan</h2>
@@ -58,7 +93,6 @@ $chart_data   = [4200000, 5100000, 3800000, 6200000, 5500000, 7100000, 6300000, 
     </div>
   </div>
 
-  <!-- ── PESANAN TERBARU ── -->
   <div class="card" style="margin-bottom:24px;">
     <div class="card-header">
       <h2>Pesanan Terbaru</h2>
@@ -78,51 +112,57 @@ $chart_data   = [4200000, 5100000, 3800000, 6200000, 5500000, 7100000, 6300000, 
         </thead>
         <tbody>
           <?php
-          $orders = [
-            ['no'=>'#ORD-001','tgl'=>'10/05/2026','nama'=>'Siti Nurjanah', 'total'=>'Rp 185.000','status'=>'Selesai'],
-            ['no'=>'#ORD-002','tgl'=>'10/05/2026','nama'=>'Budi Santoso',  'total'=>'Rp 210.000','status'=>'Dikirim'],
-            ['no'=>'#ORD-003','tgl'=>'10/05/2026','nama'=>'Dewi Lestari',  'total'=>'Rp 325.000','status'=>'Diproses'],
-            ['no'=>'#ORD-004','tgl'=>'10/05/2026','nama'=>'Andi Pratama',  'total'=>'Rp 175.000','status'=>'Selesai'],
-          ];
-          foreach ($orders as $o):
-            $badge = match($o['status']) {
-              'Selesai'  => 'badge-selesai',
-              'Dikirim'  => 'badge-dikirim',
-              'Diproses' => 'badge-diproses',
-              default    => 'badge-pending',
-            };
+          // Ambil 5 data pesanan terbaru disesuaikan dengan struktur JOIN database kamu
+          $query_orders = mysqli_query($conn, "
+              SELECT p.id_pesanan, p.tanggal_pesanan, p.total_harga, p.status_pesanan, u.nama_user 
+              FROM pesanan p 
+              LEFT JOIN user u ON p.id_user = u.id_user 
+              ORDER BY p.id_pesanan DESC 
+              LIMIT 5
+          ");
+
+          if (mysqli_num_rows($query_orders) == 0):
           ?>
           <tr>
-            <td><strong><?= $o['no'] ?></strong></td>
-            <td><?= $o['tgl'] ?></td>
-            <td><?= htmlspecialchars($o['nama']) ?></td>
-            <td style="font-weight:600;color:var(--rose);"><?= $o['total'] ?></td>
-            <td><span class="badge <?= $badge ?>"><?= $o['status'] ?></span></td>
+            <td colspan="6" style="text-align:center;color:var(--muted);padding:20px;">Belum ada data pesanan masuk.</td>
+          </tr>
+          <?php 
+          else:
+            while ($o = mysqli_fetch_assoc($query_orders)):
+              // Mapping class badge CSS sesuai ENUM status_pesanan di database kamu
+              $badge = match($o['status_pesanan']) {
+                'selesai'       => 'badge-selesai',
+                'dikirim'       => 'badge-dikirim',
+                'diproses'      => 'badge-diproses',
+                'pending'       => 'badge-pending',
+                'belum_bayar'   => 'badge-pending', // Bisa disamakan warnanya dengan pending
+                'dibatalkan'    => 'badge-ditolak',
+                default         => 'badge-pending',
+              };
+          ?>
+          <tr>
+            <td><strong>#ORD-<?= sprintf("%03d", $o['id_pesanan']) ?></strong></td>
+            <td><?= date('d/m/Y', strtotime($o['tanggal_pesanan'])) ?></td>
+            <td><?= htmlspecialchars($o['nama_user'] ?? 'Guest / Umum') ?></td>
+            <td style="font-weight:600;color:var(--rose);">Rp <?= number_format($o['total_harga'], 0, ',', '.') ?></td>
+            <td><span class="badge <?= $badge ?>"><?= str_replace('_', ' ', ucfirst($o['status_pesanan'])) ?></span></td>
             <td>
-              <a href="manajemen-pesanan.php?detail=<?= urlencode($o['no']) ?>"
-                 class="btn btn-primary btn-sm">Detail</a>
+              <a href="manajemen-pesanan.php?detail=<?= $o['id_pesanan'] ?>" class="btn btn-primary btn-sm">Detail</a>
             </td>
           </tr>
-          <?php endforeach; ?>
+          <?php 
+            endwhile; 
+          endif;
+          ?>
         </tbody>
       </table>
     </div>
-    <div class="pagination">
-      <a class="pg-active">1</a>
-      <a href="manajemen-pesanan.php">2</a>
-      <a href="manajemen-pesanan.php">3</a>
-      <span class="pg-dots">...</span>
-      <a href="manajemen-pesanan.php">6</a>
-      <a href="manajemen-pesanan.php" style="padding:0 10px;">&#8250;</a>
-    </div>
   </div>
 
-</div><!-- /.page-body -->
-
-<?php include 'includes/footer.php'; ?>
+</div><?php include 'includes/footer.php'; ?>
 
 <script>
-// ── Sales Chart ──
+// ── Sales Chart (Chart.js Integrasi Data Riil PHP) ──
 const ctx = document.getElementById('salesChart');
 if (ctx) {
   const labels = <?= json_encode($chart_labels) ?>;
@@ -158,9 +198,9 @@ if (ctx) {
       },
       scales: {
         y: {
-          beginAtZero: false,
+          beginAtZero: true,
           ticks: {
-            callback: (v) => 'Rp ' + (v/1000000).toFixed(1) + 'jt',
+            callback: (v) => 'Rp ' + (v >= 1000000 ? (v/1000000).toFixed(1) + 'jt' : v.toLocaleString('id-ID')),
             font: { size: 11 }
           },
           grid: { color: 'rgba(0,0,0,0.05)' }
@@ -177,11 +217,12 @@ if (ctx) {
     document.querySelectorAll('.card-header .btn').forEach(b => {
       b.className = b === btn ? 'btn btn-primary btn-sm' : 'btn btn-outline btn-sm';
     });
-    // Regenerate dummy data per period for demo
+    
+    // Switch filter data dinamis/simulasi periodik
     const demo = {
       minggu: { labels: ['Sen','Sel','Rab','Kam','Jum','Sab','Min'], data: [1200000,980000,1450000,870000,1600000,2100000,1800000] },
       bulan:  { labels: <?= json_encode($chart_labels) ?>, data: <?= json_encode($chart_data) ?> },
-      tahun:  { labels: ['2021','2022','2023','2024','2025','2026'], data: [45000000,62000000,78000000,95000000,110000000,88000000] },
+      tahun:  { labels: ['2023','2024','2025','2026'], data: [78000000,95000000,110000000,88000000] },
     };
     chart.data.labels = demo[period].labels;
     chart.data.datasets[0].data = demo[period].data;

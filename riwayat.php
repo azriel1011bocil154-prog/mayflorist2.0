@@ -26,27 +26,39 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
     if ($rating < 1 || $rating > 5) {
         $alert = ['type' => 'error', 'msg' => 'Pilih rating 1–5 bintang.'];
     } else {
-        // 1. Simpan ke tabel review milikmu
-        // Karena tidak ada id_pesanan di tabel review, kita hilangkan dari query ini
-        $stmtRating = $conn->prepare("
-            INSERT INTO review (id_user, id_produk, rating, komentar, tanggal_review) 
-            VALUES (?, ?, ?, ?, CURDATE())
+        // Cek Double Guard: Pastikan memang terdaftar di detail_pesanan dan belum di-rating
+        $stmtCheck = $conn->prepare("
+            SELECT sudah_rating FROM detail_pesanan 
+            WHERE id_pesanan = ? AND id_produk = ?
         ");
-        $stmtRating->bind_param("iiis", $id_user, $id_produk, $rating, $komentar);
-        
-        if ($stmtRating->execute()) {
-            // 2. Update status sudah_rating di detail_pesanan agar tombol hilang
-            $stmtUpdate = $conn->prepare("
-                UPDATE detail_pesanan 
-                SET sudah_rating = 1 
-                WHERE id_pesanan = ? AND id_produk = ?
-            ");
-            $stmtUpdate->bind_param("ii", $id_pesanan, $id_produk);
-            $stmtUpdate->execute();
+        $stmtCheck->bind_param("ii", $id_pesanan, $id_produk);
+        $stmtCheck->execute();
+        $resCheck = $stmtCheck->get_result()->fetch_assoc();
 
-            $alert = ['type' => 'success', 'msg' => 'Rating berhasil dikirim! Terima kasih atas ulasanmu.'];
+        if ($resCheck && (int)$resCheck['sudah_rating'] === 0) {
+            // 1. Simpan ke tabel review
+            $stmtRating = $conn->prepare("
+                INSERT INTO review (id_user, id_produk, rating, komentar, tanggal_review) 
+                VALUES (?, ?, ?, ?, CURDATE())
+            ");
+            $stmtRating->bind_param("iiis", $id_user, $id_produk, $rating, $komentar);
+            
+            if ($stmtRating->execute()) {
+                // 2. Update status sudah_rating di detail_pesanan agar tombol hilang
+                $stmtUpdate = $conn->prepare("
+                    UPDATE detail_pesanan 
+                    SET sudah_rating = 1 
+                    WHERE id_pesanan = ? AND id_produk = ?
+                ");
+                $stmtUpdate->bind_param("ii", $id_pesanan, $id_produk);
+                $stmtUpdate->execute();
+
+                $alert = ['type' => 'success', 'msg' => 'Rating berhasil dikirim! Terima kasih atas ulasanmu.'];
+            } else {
+                $alert = ['type' => 'error', 'msg' => 'Gagal menyimpan ulasan. Silakan coba lagi.'];
+            }
         } else {
-            $alert = ['type' => 'error', 'msg' => 'Gagal menyimpan ulasan. Silakan coba lagi.'];
+            $alert = ['type' => 'error', 'msg' => 'Produk ini sudah pernah kamu berikan ulasan.'];
         }
     }
 }
@@ -60,7 +72,7 @@ $stmtPesanan = $conn->prepare("
     SELECT id_pesanan, tanggal_pesanan, total_harga, status_pesanan, metode_pengiriman 
     FROM pesanan 
     WHERE id_user = ? 
-    ORDER BY tanggal_pesanan DESC
+    ORDER BY id_pesanan DESC
 ");
 $stmtPesanan->bind_param("i", $id_user);
 $stmtPesanan->execute();
@@ -82,8 +94,7 @@ while ($row = $resPesanan->fetch_assoc()) {
         'items'       => []
     ];
 
-    // Ambil detail produk & cek rating dari tabel review
-    // Di sini sudah disesuaikan: jumlah_produk dan harga_produk
+    // Ambil detail produk & nilai rating dari tabel review berdasarkan id_user & id_produk
     $stmtItems = $conn->prepare("
         SELECT 
             dp.id_produk, 
@@ -91,7 +102,7 @@ while ($row = $resPesanan->fetch_assoc()) {
             dp.harga_produk, 
             pr.nama_produk, 
             dp.sudah_rating,
-            (SELECT rating FROM review WHERE id_user = ? AND id_produk = dp.id_produk LIMIT 1) AS nilai_rating
+            (SELECT rating FROM review WHERE id_user = ? AND id_produk = dp.id_produk ORDER BY id_review DESC LIMIT 1) AS nilai_rating
         FROM detail_pesanan dp
         JOIN produk pr ON dp.id_produk = pr.id_produk
         WHERE dp.id_pesanan = ?
@@ -104,8 +115,8 @@ while ($row = $resPesanan->fetch_assoc()) {
         $order_data['items'][] = [
             'id'           => $item['id_produk'],
             'name'         => $item['nama_produk'],
-            'qty'          => $item['jumlah_produk'], // Menyesuaikan kolom jumlah_produk
-            'price'        => $item['harga_produk'],  // Menyesuaikan kolom harga_produk
+            'qty'          => $item['jumlah_produk'], 
+            'price'        => $item['harga_produk'],  
             'sudah_rating' => (bool)$item['sudah_rating'],
             'rating'       => $item['nilai_rating'] ? (int)$item['nilai_rating'] : 0
         ];
@@ -123,11 +134,11 @@ include 'includes/header.php';
 
   <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:24px;">
     <h1 style="font-size:24px;">Riwayat Pesanan</h1>
-    <a href="pesanan.php" style="font-size:14px;color:var(--rose);">&larr; Pesanan Aktif</a>
+    <a href="pesanan.php" style="font-size:14px;color:var(--rose); text-decoration:none;">&larr; Pesanan Aktif</a>
   </div>
 
   <?php if ($alert): ?>
-  <div style="border-radius:8px;padding:12px 16px;margin-bottom:20px;font-size:14px;
+  <div style="border-radius:8px;padding:12px 16px;margin-bottom:20px;font-size:14px; font-weight:500;
     <?= $alert['type']==='success' ? 'background:#eaf7ee;color:#256d3f;border:1px solid #b3e4c2;' : 'background:#fdeaea;color:#9b2020;border:1px solid #f5c6c6;' ?>">
     <?= $alert['type']==='success' ? '&#10003;' : '&#9888;' ?> <?= htmlspecialchars($alert['msg']) ?>
   </div>
@@ -151,7 +162,7 @@ include 'includes/header.php';
           <span style="font-size:12px;color:var(--muted);margin-left:10px;">&#128197; <?= $p['tgl'] ?></span>
         </div>
         <div style="display:flex;align-items:center;gap:10px;">
-          <span style="<?= strtolower($p['status']) === 'selesai' ? 'background:#eaf7ee;color:#256d3f;' : (strtolower($p['status']) === 'dibatalkan' ? 'background:#fdeaea;color:#9b2020;' : 'background:#fff3cd;color:#856404;') ?>
+          <span class="status-badge" style="<?= strtolower($p['status']) === 'selesai' ? 'background:#eaf7ee;color:#256d3f;' : (strtolower($p['status']) === 'dibatalkan' ? 'background:#fdeaea;color:#9b2020;' : 'background:#fff3cd;color:#856404;') ?>
                 font-size:12px;font-weight:600;padding:4px 12px;border-radius:100px;">
             <?= strtolower($p['status']) === 'selesai' ? '&#127800;' : (strtolower($p['status']) === 'dibatalkan' ? '&#10006;' : '&#8987;') ?> <?= $p['status'] ?>
           </span>
@@ -173,18 +184,18 @@ include 'includes/header.php';
               <?= $item['qty'] ?> pcs · Rp <?= number_format($item['price'], 0, ',', '.') ?>
             </div>
 
-            <?php if ($item['sudah_rating']): ?>
-            <div style="margin-top:5px;display:flex;align-items:center;gap:4px;">
-              <span style="color:var(--gold);font-size:14px;">
+            <?php if ($item['sudah_rating'] && $item['rating'] > 0): ?>
+            <div style="margin-top:5px;display:flex;align-items:center;gap:6px;">
+              <span style="color:#ffc107;font-size:14px; letter-spacing: 2px;">
                 <?= str_repeat('★', $item['rating']) ?><?= str_repeat('☆', 5 - $item['rating']) ?>
               </span>
-              <span style="font-size:12px;color:var(--muted);">Ulasanmu</span>
+              <span style="font-size:12px;color:var(--muted);font-weight:500;">Ulasanmu</span>
             </div>
             <?php endif; ?>
           </div>
 
           <?php if (strtolower($p['status']) === 'selesai' && !$item['sudah_rating']): ?>
-          <button class="btn btn-outline btn-sm"
+          <button class="btn btn-outline btn-sm btn-ulas"
                   onclick="openRating(<?= $p['id_pesanan'] ?>, <?= $item['id'] ?>, '<?= htmlspecialchars(addslashes($item['name'])) ?>')">
             &#11088; Beri Rating
           </button>
@@ -194,12 +205,12 @@ include 'includes/header.php';
       </div>
 
       <div class="riwayat-footer">
-        <div style="font-weight:700;font-size:15px;">
+        <div style="font-weight:700;font-size:15px; color: var(--bark);">
           Total: <span style="color:var(--rose);">Rp <?= number_format($p['total'], 0, ',', '.') ?></span>
         </div>
         <div style="display:flex;gap:8px;">
           <?php if (strtolower($p['status']) === 'selesai'): ?>
-          <a href="katalog.php" class="btn btn-outline btn-sm">Beli Lagi</a>
+          <a href="katalog.php" class="btn btn-outline btn-sm" style="text-decoration:none;">Beli Lagi</a>
           <?php endif; ?>
         </div>
       </div>
@@ -209,11 +220,11 @@ include 'includes/header.php';
   <?php endif; ?>
 </div>
 
-<div id="modal-rating" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.45);z-index:200;align-items:center;justify-content:center;">
-  <div style="background:white;border-radius:14px;width:440px;max-width:95vw;overflow:hidden;box-shadow:0 12px 48px rgba(0,0,0,0.15);">
+<div id="modal-rating" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:9999;align-items:center;justify-content:center;">
+  <div style="background:white;border-radius:14px;width:440px;max-width:95vw;overflow:hidden;box-shadow:0 12px 48px rgba(0,0,0,0.2); animation: scaleUp 0.2s ease-out;">
     <div style="padding:18px 22px 14px;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center;">
-      <h3 style="font-family:'Playfair Display',serif;font-size:17px;">Beri Rating Produk</h3>
-      <button onclick="closeRating()" style="background:var(--petal);border:none;cursor:pointer;width:28px;height:28px;border-radius:5px;font-size:16px;">&#10005;</button>
+      <h3 style="font-family:'Playfair Display',serif;font-size:17px; margin:0;">Beri Rating Produk</h3>
+      <button onclick="closeRating()" style="background:var(--petal);border:none;cursor:pointer;width:28px;height:28px;border-radius:5px;font-size:14px; color:var(--muted); font-weight:bold;">&#10005;</button>
     </div>
 
     <form method="POST" action="riwayat.php">
@@ -223,10 +234,10 @@ include 'includes/header.php';
       <input type="hidden" name="rating" id="r-rating-value" value="0">
 
       <div style="padding:20px 22px;">
-        <p id="r-produk-name" style="font-weight:600;color:var(--bark);margin-bottom:16px;font-size:15px;"></p>
+        <p id="r-produk-name" style="font-weight:600;color:var(--bark);margin-top:0;margin-bottom:16px;font-size:15px;"></p>
 
-        <div style="margin-bottom:16px;">
-          <label style="font-size:13px;font-weight:500;color:var(--bark);display:block;margin-bottom:8px;">
+        <div style="margin-bottom:18px;">
+          <label style="font-size:13px;font-weight:600;color:var(--bark);display:block;margin-bottom:8px;">
             Rating <span style="color:var(--rose)">*</span>
           </label>
           <div class="star-picker" id="starPicker">
@@ -237,24 +248,24 @@ include 'includes/header.php';
             </span>
             <?php endfor; ?>
           </div>
-          <div id="r-label" style="font-size:12px;color:var(--muted);margin-top:4px;"></div>
+          <div id="r-label" style="font-size:13px; font-weight:600; color:var(--rose); margin-top:6px; min-height:18px;"></div>
         </div>
 
         <div>
-          <label style="font-size:13px;font-weight:500;color:var(--bark);display:block;margin-bottom:5px;">
+          <label style="font-size:13px;font-weight:600;color:var(--bark);display:block;margin-bottom:6px;">
             Komentar (Opsional)
           </label>
-          <textarea name="komentar"
-                    style="width:100%;padding:10px 13px;border:1px solid var(--border);border-radius:7px;font-family:'DM Sans',sans-serif;font-size:14px;resize:vertical;min-height:80px;outline:none;"
+          <textarea name="komentar" id="r-komentar"
+                    style="width:100%;padding:10px 13px;border:1px solid var(--border);border-radius:7px;font-family:inherit;font-size:14px;resize:none;min-height:90px;outline:none;box-sizing:border-box;"
                     placeholder="Ceritakan pengalamanmu dengan produk ini..."
                     onfocus="this.style.borderColor='var(--rose)'"
                     onblur="this.style.borderColor='var(--border)'"></textarea>
         </div>
       </div>
 
-      <div style="padding:14px 22px;border-top:1px solid var(--border);display:flex;justify-content:flex-end;gap:10px;">
-        <button type="button" onclick="closeRating()" class="btn btn-outline">Batal</button>
-        <button type="submit" class="btn btn-primary">Kirim Rating</button>
+      <div style="padding:14px 22px;border-top:1px solid var(--border);display:flex;justify-content:flex-end;gap:10px;background:#fafafa;">
+        <button type="button" onclick="closeRating()" class="btn btn-outline" style="padding:8px 16px; font-size:13px;">Batal</button>
+        <button type="submit" class="btn btn-primary" style="padding:8px 20px; font-size:13px; font-weight:600;">Kirim Rating</button>
       </div>
     </form>
   </div>
@@ -275,7 +286,7 @@ include 'includes/header.php';
 }
 .riwayat-item {
   display: flex; align-items: center; gap: 12px;
-  padding: 10px 0; border-bottom: 1px solid var(--border);
+  padding: 12px 0; border-bottom: 1px solid var(--border);
 }
 .riwayat-item:last-child { border-bottom: none; }
 .riwayat-footer {
@@ -289,46 +300,106 @@ include 'includes/header.php';
   justify-content: center; font-size: 24px; flex-shrink: 0;
   border: 1px solid var(--border);
 }
-.star-picker { display: flex; gap: 6px; }
-.star-pick {
-  font-size: 28px; cursor: pointer; color: var(--border);
-  transition: color .15s, transform .1s;
+.btn-ulas {
+  cursor: pointer;
+  transition: all 0.2s ease;
 }
-.star-pick:hover, .star-pick.hovered, .star-pick.selected { color: var(--gold); }
-.star-pick:hover { transform: scale(1.2); }
+.btn-ulas:hover {
+  background: var(--rose) !important;
+  color: #fff !important;
+  border-color: var(--rose) !important;
+}
+
+/* Modal Animation */
+@keyframes scaleUp { 
+  from { transform: scale(0.95); opacity: 0; } 
+  to { transform: scale(1); opacity: 1; } 
+}
+
+/* Star Picker Style */
+.star-picker { display: flex; gap: 4px; }
+.star-pick {
+  font-size: 32px; cursor: pointer; color: #ddd;
+  transition: color .15s, transform .1s;
+  line-height: 1;
+  user-select: none;
+}
+.star-pick.hovered, .star-pick.selected { color: #ffc107; }
+.star-pick:hover { transform: scale(1.15); }
 </style>
 
 <script>
 let selectedRating = 0;
-const labels = ['','Sangat Buruk','Kurang Baik','Cukup','Bagus','Sangat Bagus &#127800;'];
+const labels = ['', 'Sangat Buruk 😞', 'Kurang Baik 🙁', 'Cukup Ok 😐', 'Bagus 🙂', 'Sangat Bagus 🥰 &#127800;'];
 
 function openRating(id_pesanan, id_produk, name) {
   document.getElementById('r-id-pesanan').value  = id_pesanan;
   document.getElementById('r-id-produk').value = id_produk;
   document.getElementById('r-produk-name').textContent = name;
+  
+  // Reset fields
   selectedRating = 0;
   document.getElementById('r-rating-value').value = 0;
   document.getElementById('r-label').innerHTML = '';
-  document.querySelectorAll('.star-pick').forEach(s => s.classList.remove('selected','hovered'));
-  document.getElementById('modal-rating').style.display = 'flex';
+  document.getElementById('r-komentar').value = '';
+  
+  document.querySelectorAll('.star-pick').forEach(s => {
+      s.classList.remove('selected','hovered');
+      s.innerHTML = '&#9734;'; // Reset ke bintang kosong
+  });
+  
+  const modal = document.getElementById('modal-rating');
+  modal.style.display = 'flex';
 }
+
 function closeRating() {
   document.getElementById('modal-rating').style.display = 'none';
 }
+
 function setRating(val) {
   selectedRating = val;
   document.getElementById('r-rating-value').value = val;
   document.getElementById('r-label').innerHTML = labels[val];
-  document.querySelectorAll('.star-pick').forEach((s,i) => {
-    s.classList.toggle('selected', i < val);
+  
+  document.querySelectorAll('.star-pick').forEach((s, i) => {
+    if (i < val) {
+      s.classList.add('selected');
+      s.innerHTML = '&#9733;'; // Ubah jadi bintang penuh
+    } else {
+      s.classList.remove('selected');
+      s.innerHTML = '&#9734;'; // Balik ke bintang kosong
+    }
   });
 }
+
 function hoverRating(val) {
-  document.querySelectorAll('.star-pick').forEach((s,i) => {
-    s.classList.toggle('hovered', i < val);
+  document.querySelectorAll('.star-pick').forEach((s, i) => {
+    if (i < val) {
+      s.classList.add('hovered');
+      s.innerHTML = '&#9733;'; // Preview bintang penuh sewaktu di-hover
+    } else {
+      s.classList.remove('hovered');
+    }
   });
 }
+
 function unhoverRating() {
-  document.querySelectorAll('.star-pick').forEach(s => s.classList.remove('hovered'));
+  document.querySelectorAll('.star-pick').forEach((s, i) => {
+    s.classList.remove('hovered');
+    // Kembalikan ke state asli sesuai yang diklik sebelumnya
+    if (i < selectedRating) {
+      s.innerHTML = '&#9733;';
+    } else {
+      s.innerHTML = '&#9734;';
+    }
+  });
+}
+
+// Menutup modal sewaktu area gelap di luar modal diklik
+window.onclick = function(event) {
+  const modal = document.getElementById('modal-rating');
+  if (event.target === modal) {
+    closeRating();
+  }
 }
 </script>
