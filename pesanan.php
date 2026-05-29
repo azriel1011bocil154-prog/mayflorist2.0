@@ -36,48 +36,18 @@ while ($row = mysqli_fetch_assoc($query)) {
     $pesanan_aktif[] = $row;
 }
 
-// Konfigurasi visual status pesanan
+// Konfigurasi visual status pesanan default
 $status_config = [
-    'belum_bayar' => [
-        'color' => '#8C7570',
-        'bg'    => '#F9F1EE',
-        'icon'  => '&#128179;',
-        'step'  => 1
-    ],
-    'pending' => [
-        'color' => '#7d5a00',
-        'bg'    => '#fff8e1',
-        'icon'  => '&#128336;',
-        'step'  => 2
-    ],
-    'diproses' => [
-        'color' => '#0d5c8c',
-        'bg'    => '#e8f4fd',
-        'icon'  => '&#9986;',
-        'step'  => 3
-    ],
-    'dikirim' => [
-        'color' => '#256d3f',
-        'bg'    => '#eaf7ee',
-        'icon'  => '&#128665;',
-        'step'  => 4
-    ],
-    'selesai' => [
-        'color' => '#256d3f',
-        'bg'    => '#eaf7ee',
-        'icon'  => '&#127800;',
-        'step'  => 5
-    ],
-    'dibatalkan' => [
-        'color' => '#9b2020',
-        'bg'    => '#fdeaea',
-        'icon'  => '&#10006;',
-        'step'  => 0
-    ]
+    'belum_bayar' => ['color' => '#8C7570', 'bg' => '#F9F1EE', 'icon' => '&#128179;', 'step' => 1],
+    'pending'     => ['color' => '#7d5a00', 'bg' => '#fff8e1', 'icon' => '&#128336;', 'step' => 2],
+    'diproses'    => ['color' => '#0d5c8c', 'bg' => '#e8f4fd', 'icon' => '&#9986;',   'step' => 3],
+    'dikirim'     => ['color' => '#256d3f', 'bg' => '#eaf7ee', 'icon' => '&#128665;', 'step' => 4], // Akan dimodif dinamis di bawah jika Ambil Sendiri
+    'selesai'     => ['color' => '#256d3f', 'bg' => '#eaf7ee', 'icon' => '&#127800;', 'step' => 5],
+    'dibatalkan'  => ['color' => '#9b2020', 'bg' => '#fdeaea', 'icon' => '&#10006;',  'step' => 0]
 ];
 
 $page_title = 'Pesanan Saya — MayFlorist';
-include 'includes/header.php'; // Pastikan file header Anda sudah benar
+include 'includes/header.php';
 ?>
 
 <div class="page-wrapper" style="padding-top:36px;padding-bottom:64px; max-width:1200px; margin:0 auto; padding-left:15px; padding-right:15px;">
@@ -102,7 +72,23 @@ include 'includes/header.php'; // Pastikan file header Anda sudah benar
 
     <div style="display:flex;flex-direction:column;gap:20px;">
       <?php foreach ($pesanan_aktif as $p):
+        // Copy konfigurasi default agar aman diubah-ubah tiap iterasi
         $sc = $status_config[$p['status_pesanan']] ?? $status_config['pending'];
+
+        // ── LOGIKA DETEKSI AMBIL SENDIRI (PICKUP) ──
+        $is_pickup = false;
+        $alamat_lower = strtolower(trim($p['alamat_pesanan']));
+        // Jika alamat berisi kata "ambil", "toko", kosong, atau sekadar "-", anggap ambil sendiri
+        if (strpos($alamat_lower, 'ambil') !== false || strpos($alamat_lower, 'toko') !== false || $alamat_lower === '' || $alamat_lower === '-') {
+            $is_pickup = true;
+        }
+
+        // Ubah Label Status khusus untuk yang diambil sendiri saat proses selesai dirangkai
+        $status_label = ucfirst(str_replace('_', ' ', $p['status_pesanan']));
+        if ($is_pickup && $p['status_pesanan'] === 'dikirim') {
+            $status_label = 'Siap Diambil';
+            $sc['icon'] = '🏬'; // Icon toko
+        }
 
         // ── LOGIKA HITUNG PEMBAYARAN & DETEKSI DP ──
         $id_pesanan_cek = (int)$p['id_pesanan']; 
@@ -126,13 +112,35 @@ include 'includes/header.php'; // Pastikan file header Anda sudah benar
             }
         }
 
-        // Sisa tagihan riil berdasarkan yang sudah di-approve admin
         $sisa_tagihan = $p['total_harga'] - $total_dibayar;
-        
-        // Sisa yang benar-benar belum ditransfer oleh user saat ini (mengabaikan yang sedang diverifikasi)
         $sisa_belum_ditransfer = $p['total_harga'] - ($total_dibayar + $total_menunggu);
-        if ($sisa_belum_ditransfer < 0) {
-            $sisa_belum_ditransfer = 0;
+        if ($sisa_belum_ditransfer < 0) $sisa_belum_ditransfer = 0;
+
+        // ── LOGIKA ESTIMASI WAKTU PROSES ──
+        $waktu_pesan = strtotime($p['tanggal_pesanan']);
+        $estimasi_selesai = $waktu_pesan + 14400; // 4 Jam
+
+        $info_estimasi = "";
+        $style_estimasi = "background:#edf2f7; color:#4a5568; border:1px solid #cbd5e1;";
+
+        if ($p['status_pesanan'] === 'belum_bayar') {
+            $info_estimasi = "⏳ Waktu pengerjaan akan dijadwalkan setelah Anda melakukan pembayaran.";
+            $style_estimasi = "background:#fff5f5; color:#c53030; border:1px solid #fed7d7;";
+        } elseif ($p['status_pesanan'] === 'pending') {
+            $info_estimasi = "💐 Pembayaran diverifikasi. Estimasi bunga selesai dirangkai pukul " . date('H:i', $estimasi_selesai) . " WIB";
+            $style_estimasi = "background:#fffaf0; color:#dd6b20; border:1px solid #feebc8;";
+        } elseif ($p['status_pesanan'] === 'diproses') {
+            $info_estimasi = "✂️ Sedang dirangkai oleh florist kami. Estimasi siap ambil/kirim pukul " . date('H:i', $estimasi_selesai) . " WIB";
+            $style_estimasi = "background:#e6fffa; color:#234e52; border:1px solid #b2f5ea;";
+        } elseif ($p['status_pesanan'] === 'dikirim') {
+            // Cek jika Ambil Sendiri vs Dikirim Kurir
+            if ($is_pickup) {
+                $info_estimasi = "🏬 Bunga sudah selesai dirangkai! Silakan datang ke toko untuk mengambil pesanan Anda.";
+                $style_estimasi = "background:#eaf7ee; color:#256d3f; border:1px solid #c6f6d5;";
+            } else {
+                $info_estimasi = "🛵 Paket bunga dibawa kurir. Estimasi tiba di lokasi dalam 30 - 60 menit.";
+                $style_estimasi = "background:#eaf7ee; color:#256d3f; border:1px solid #c6f6d5;";
+            }
         }
       ?>
 
@@ -154,13 +162,15 @@ include 'includes/header.php'; // Pastikan file header Anda sudah benar
           </div>
 
           <span class="status-badge" style="background:<?= $sc['bg'] ?>;color:<?= $sc['color'] ?>;">
-            <?= $sc['icon'] ?> <?= ucfirst(str_replace('_', ' ', $p['status_pesanan'])) ?>
+            <?= $sc['icon'] ?> <?= $status_label ?>
           </span>
         </div>
 
         <div class="order-progress">
           <?php
-          $steps = ['Dibuat', 'Bayar', 'Diproses', 'Dikirim', 'Selesai'];
+          // Sesuaikan text progress bar jika diambil sendiri
+          $langkah_pengiriman = $is_pickup ? 'Siap Diambil' : 'Dikirim';
+          $steps = ['Dibuat', 'Bayar', 'Diproses', $langkah_pengiriman, 'Selesai'];
           $cur   = $sc['step'];
 
           foreach ($steps as $i => $s):
@@ -188,11 +198,31 @@ include 'includes/header.php'; // Pastikan file header Anda sudah benar
               <div style="font-size:13px;color:#666;">
                 Total Harga Pesanan: <?= formatRupiah($p['total_harga']) ?>
               </div>
-              <?php if (!empty($p['alamat_pesanan'])): ?>
+              
+              <?php if (!empty($p['alamat_pesanan']) && $p['alamat_pesanan'] !== '-'): ?>
                 <div style="font-size:12px;color:#777;margin-top:6px; background:#f9f9f9; padding:6px 10px; border-radius:6px; display:inline-block;">
-                  📍 Alamat: <?= htmlspecialchars($p['alamat_pesanan']) ?>
+                  <?= $is_pickup ? '🏬 Metode: ' : '📍 Alamat: ' ?><?= htmlspecialchars($p['alamat_pesanan']) ?>
+                </div>
+              <?php else: ?>
+                <div style="font-size:12px;color:#2b6cb0;margin-top:6px; background:#ebf8ff; padding:6px 10px; border-radius:6px; display:inline-block;">
+                  🏬 Metode: Ambil Sendiri di Toko
                 </div>
               <?php endif; ?>
+
+              <div style="margin-top: 8px; display: flex; flex-direction: column; gap: 6px; align-items: flex-start;">
+                <?php if (!empty($info_estimasi)): ?>
+                  <div style="font-size:12px; padding:6px 10px; border-radius:6px; display:inline-block; font-weight: 500; <?= $style_estimasi ?>">
+                    <?= $info_estimasi ?>
+                  </div>
+                <?php endif; ?>
+
+                <?php if (!empty($p['catatan']) && $p['catatan'] !== '-'): ?>
+                  <div style="font-size:11px; color:#555; background:#f8fafc; padding:4px 8px; border-radius:6px; border-left:3px solid #cbd5e1; display:inline-block; font-style: italic;">
+                    💬 Catatan Anda: "<?= htmlspecialchars($p['catatan']) ?>"
+                  </div>
+                <?php endif; ?>
+              </div>
+
             </div>
             
             <?php if ($is_dp && $total_dibayar > 0): ?>
@@ -228,7 +258,6 @@ include 'includes/header.php'; // Pastikan file header Anda sudah benar
             </div>
             <div style="font-size:18px; font-weight:800; color:var(--rose, #e05275);">
               <?php 
-                // Jika user sudah bayar pelunasan (meski statusnya masih menunggu konfirmasi)
                 if ($sisa_belum_ditransfer <= 0) {
                     if ($total_menunggu > 0 && $sisa_tagihan > 0) {
                         echo "Rp 0 <span style='font-size:12px; color:#b7791f; font-weight:bold;'>(Menunggu Verifikasi)</span>";
@@ -263,11 +292,11 @@ include 'includes/header.php'; // Pastikan file header Anda sudah benar
               </a>
 
             <?php elseif ($p['status_pesanan'] === 'dikirim'): ?>
-
+              
               <button
                 class="btn-action btn-success-solid"
-                onclick="openConfirmModal(<?= $p['id_pesanan'] ?>)">
-                ✓ Pesanan Diterima
+                onclick="openConfirmModal(<?= $p['id_pesanan'] ?>, <?= $is_pickup ? 'true' : 'false' ?>)">
+                <?= $is_pickup ? '✓ Bunga Sudah Saya Ambil' : '✓ Pesanan Diterima' ?>
               </button>
 
             <?php else: ?>
@@ -286,45 +315,23 @@ include 'includes/header.php'; // Pastikan file header Anda sudah benar
 
   <?php endif; ?>
 </div>
-<!-- MODAL KONFIRMASI TERIMA -->
+
 <div class="confirm-modal-overlay" id="confirmModal">
-
   <div class="confirm-modal">
-
-    <div class="confirm-icon">
-      📦
-    </div>
-
-    <h3>Pesanan Sudah Diterima?</h3>
-
-    <p>
-      Pastikan bunga sudah sampai dengan baik sebelum menyelesaikan pesanan.
-    </p>
-
+    <div class="confirm-icon" id="modalIcon">📦</div>
+    <h3 id="modalTitle">Pesanan Sudah Diterima?</h3>
+    <p id="modalDesc">Pastikan bunga sudah sampai dengan baik sebelum menyelesaikan pesanan.</p>
     <div class="confirm-actions">
-
-      <button
-        class="btn-cancel"
-        onclick="closeConfirmModal()">
-        Batal
-      </button>
-
-      <a
-        href="#"
-        id="confirmLink"
-        class="btn-confirm">
-        Ya, Sudah Diterima
-      </a>
-
+      <button class="btn-cancel" onclick="closeConfirmModal()">Batal</button>
+      <a href="#" id="confirmLink" class="btn-confirm">Ya, Sudah Diterima</a>
     </div>
-
   </div>
-
 </div>
+
 <?php include 'includes/footer.php'; ?>
 
 <style>
-/* Style Anda tetap aman dan tidak berubah */
+/* CSS Sama persis, tidak ada yang diubah */
 .order-card {
   background: white;
   border: 1px solid #e3e3e3;
@@ -475,9 +482,6 @@ include 'includes/header.php'; // Pastikan file header Anda sudah benar
 .btn-outline-gray:hover {
   background: #f7fafc;
 }
-/* =========================
-   MODAL KONFIRMASI TERIMA
-========================= */
 
 .confirm-modal-overlay{
   position:fixed;
@@ -487,17 +491,14 @@ include 'includes/header.php'; // Pastikan file header Anda sudah benar
   align-items:center;
   justify-content:center;
   z-index:9999;
-
   opacity:0;
   visibility:hidden;
   transition:.25s;
 }
-
 .confirm-modal-overlay.show{
   opacity:1;
   visibility:visible;
 }
-
 .confirm-modal{
   width:90%;
   max-width:420px;
@@ -505,52 +506,40 @@ include 'includes/header.php'; // Pastikan file header Anda sudah benar
   border-radius:22px;
   padding:32px 28px;
   text-align:center;
-
   transform:translateY(30px) scale(.95);
   transition:.25s ease;
-
-  box-shadow:
-    0 20px 50px rgba(0,0,0,.15);
+  box-shadow: 0 20px 50px rgba(0,0,0,.15);
 }
-
 .confirm-modal-overlay.show .confirm-modal{
   transform:translateY(0) scale(1);
 }
-
 .confirm-icon{
   width:82px;
   height:82px;
   margin:auto;
   margin-bottom:18px;
-
   border-radius:50%;
   background:#eaf7ee;
-
   display:flex;
   align-items:center;
   justify-content:center;
-
   font-size:42px;
 }
-
 .confirm-modal h3{
   font-size:24px;
   margin-bottom:10px;
   color:#2d3748;
 }
-
 .confirm-modal p{
   font-size:14px;
   line-height:1.6;
   color:#718096;
   margin-bottom:28px;
 }
-
 .confirm-actions{
   display:flex;
   gap:12px;
 }
-
 .confirm-actions button,
 .confirm-actions a{
   flex:1;
@@ -562,51 +551,50 @@ include 'includes/header.php'; // Pastikan file header Anda sudah benar
   transition:.2s;
   cursor:pointer;
 }
-
 .btn-cancel{
   border:none;
   background:#edf2f7;
   color:#4a5568;
 }
-
 .btn-cancel:hover{
   background:#e2e8f0;
 }
-
 .btn-confirm{
   background:#38a169;
   color:white;
 }
-
 .btn-confirm:hover{
   background:#2f855a;
 }
 </style>
+
 <script>
-
-function openConfirmModal(id) {
-
-  document.getElementById('confirmModal')
-    .classList.add('show');
-
-  document.getElementById('confirmLink')
-    .href = 'konfirmasi_terima.php?no=' + id;
+// Ditambah parameter isPickup supaya tulisan di dalam modal berubah otomatis
+function openConfirmModal(id, isPickup) {
+  document.getElementById('confirmModal').classList.add('show');
+  document.getElementById('confirmLink').href = 'konfirmasi_terima.php?no=' + id;
+  
+  // Ubah konten modal berdasarkan tipe pengiriman
+  if (isPickup) {
+      document.getElementById('modalIcon').innerHTML = '🏬';
+      document.getElementById('modalTitle').innerText = 'Bunga Sudah Diambil?';
+      document.getElementById('modalDesc').innerText = 'Pastikan Anda sudah mengambil dan mengecek pesanan bunga di toko sebelum menyelesaikannya.';
+      document.getElementById('confirmLink').innerText = 'Ya, Sudah Saya Ambil';
+  } else {
+      document.getElementById('modalIcon').innerHTML = '📦';
+      document.getElementById('modalTitle').innerText = 'Pesanan Sudah Diterima?';
+      document.getElementById('modalDesc').innerText = 'Pastikan bunga sudah sampai di lokasi dengan baik sebelum menyelesaikan pesanan.';
+      document.getElementById('confirmLink').innerText = 'Ya, Sudah Diterima';
+  }
 }
 
 function closeConfirmModal() {
-
-  document.getElementById('confirmModal')
-    .classList.remove('show');
+  document.getElementById('confirmModal').classList.remove('show');
 }
 
-// close ketika klik background
-document.getElementById('confirmModal')
-  .addEventListener('click', function(e){
-
+document.getElementById('confirmModal').addEventListener('click', function(e){
     if(e.target === this){
       closeConfirmModal();
     }
-
 });
-
 </script>

@@ -79,15 +79,15 @@ $cart_count = array_sum(array_column($_SESSION['cart'], 'qty'));
           </div>
         </div>
         <div class="dropdown-divider-line"></div>
-        <a href="<?= $base_path ?? '' ?>profil.php"   class="dropdown-item-bloom"><i class="far fa-user"></i> Taman Profil</a>
-        <a href="<?= $base_path ?? '' ?>pesanan.php"  class="dropdown-item-bloom"><i class="fas fa-box"></i> Rangkaian Pesanan</a>
-        <a href="<?= $base_path ?? '' ?>riwayat.php"  class="dropdown-item-bloom"><i class="fas fa-history"></i> Memori Belanja</a>
+        <a href="<?= $base_path ?? '' ?>profil.php"   class="dropdown-item-bloom"><i class="far fa-user"></i>Profil</a>
+        <a href="<?= $base_path ?? '' ?>pesanan.php"  class="dropdown-item-bloom"><i class="fas fa-box"></i>Pesanan</a>
+        <a href="<?= $base_path ?? '' ?>riwayat.php"  class="dropdown-item-bloom"><i class="fas fa-history"></i>Riwayat Belanja</a>
         <?php if ($_SESSION['user']['role'] === 'admin'): ?>
         <div class="dropdown-divider-line"></div>
         <a href="<?= $base_path ?? '' ?>admin/index.php" class="dropdown-item-bloom admin-color"><i class="fas fa-gavel"></i> Ruang Florist Utama</a>
         <?php endif; ?>
         <div class="dropdown-divider-line"></div>
-        <a href="<?= $base_path ?? '' ?>logout.php" class="dropdown-item-bloom logout-color"><i class="fas fa-sign-out-alt"></i> Pamit Keluar</a>
+        <a href="<?= $base_path ?? '' ?>logout.php" class="dropdown-item-bloom logout-color"><i class="fas fa-sign-out-alt"></i>Keluar</a>
       </div>
     </div>
     <?php else: ?>
